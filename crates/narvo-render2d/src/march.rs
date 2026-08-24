@@ -70,6 +70,20 @@ pub struct Ray {
     dir_x: i32,
     dir_y: i32,
     length: i32,
+    /// Set when this ray's interval lies entirely outside the field.
+    ///
+    /// **The march ignores it**, and that is the whole point: `march.wgsl` reads
+    /// five words and this is the sixth, which it has always had room for and
+    /// never read. What the flag is for lives one layer up — a cascade level
+    /// whose near end is beyond the field edge in some direction has a direction
+    /// that met *nothing*, and a zero-length ray sitting on the border cannot say
+    /// that: the march would answer about whichever texel the border happens to
+    /// hold. M8.5b's kernels read the flag and treat such a direction as having
+    /// escaped.
+    ///
+    /// It is `0` or `1` and nothing else, and it is only ever set by
+    /// [`Self::escaping`].
+    escaping: i32,
 }
 
 impl Ray {
@@ -147,6 +161,7 @@ impl Ray {
             dir_x: (unit_x * FIXED).round() as i32,
             dir_y: (unit_y * FIXED).round() as i32,
             length: (length * FIXED).round() as i32,
+            escaping: 0,
         };
         Ok(ray)
     }
@@ -162,6 +177,36 @@ impl Ray {
         length
     }
 
+    /// Marks this ray as one whose interval lies entirely outside the field.
+    ///
+    /// See [`Self::escaping`](Ray#structfield.escaping). Consumed by M8.5b's
+    /// cascade kernels; **the march does not read it**, so a marked ray marches
+    /// exactly as an unmarked one would.
+    #[must_use]
+    pub(crate) fn escaping(mut self) -> Self {
+        self.escaping = 1;
+        self
+    }
+
+    /// Whether [`Self::escaping`] was called on this ray.
+    ///
+    /// **Read only by `cascade.rs`'s own tests**, which is what the attribute
+    /// says: the kernels read the flag out of the storage buffer rather than
+    /// through this accessor, so nothing in a non-test build calls it. It exists
+    /// because the mark is otherwise unobservable from the CPU, and a mark
+    /// nothing can check is a mark nobody can guard.
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the kernels read the flag from the buffer; only the guard for it calls this"
+        )
+    )]
+    pub(crate) fn is_escaping(&self) -> bool {
+        self.escaping != 0
+    }
+
     /// The eight words this ray occupies in the kernel's storage buffer.
     fn words(&self) -> [i32; 8] {
         [
@@ -170,7 +215,7 @@ impl Ray {
             self.dir_x,
             self.dir_y,
             self.length,
-            0,
+            self.escaping,
             0,
             0,
         ]

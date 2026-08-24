@@ -88,6 +88,13 @@ pub mod glyph_atlas;
 mod golden;
 #[cfg(feature = "gpu")]
 mod gpu;
+/// A cascade of levels, and the two ways to merge one.
+///
+/// **M8.5b, and the reason M8.5a's stage exists.** Public because the choice
+/// between the two merges is a plan decision rather than an engine one: both are
+/// offered, both are costed by [`Cascade::budget`], and neither is preferred.
+#[cfg(feature = "gpu")]
+mod hierarchy;
 /// The circle march: how far a ray gets before it meets an occluder.
 ///
 /// M8.4's capability, and the first thing in this crate that reads the field
@@ -132,6 +139,11 @@ pub use crate::error::RenderError;
 #[cfg(feature = "gpu")]
 pub use crate::golden::{
     Golden, GoldenError, GoldenReport, MismatchDetails, Tolerance, WorstPixel, golden_artifact_dir,
+};
+#[cfg(feature = "gpu")]
+pub use crate::hierarchy::{
+    Cascade, CascadeBudget, CascadeLayout, ENTRY_BYTES, LevelBudget, MAX_STORAGE_BINDING_BYTES,
+    MergeForm,
 };
 #[cfg(feature = "gpu")]
 pub use crate::march::{MarchHit, MarchVerdict, Ray};

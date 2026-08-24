@@ -1,5 +1,18 @@
 // One cascade stage: integrate what a probe's directions found.
 //
+// **M8.5b turned this into a cascade level.** A direction that leaves the
+// interval used to carry a uniform far radiance; it now carries the composed
+// radiance of the level *above*, read from `upper` and interpolated to this
+// probe's position. A stage with no level above it - M8.5a's single stage, and
+// the top of any cascade - passes `has_upper = 0` and gets the uniform back.
+//
+// The interpolation is four texel fetches, three adds and a division by four,
+// and **there is still no `f32` multiplication in this file**. That is not a
+// coincidence: the bilinear weights of an aligned two-to-one grid are 1, 1/2 or
+// 1/4, and summing four samples (with the same sample repeated where a weight is
+// 1) and dividing by four *is* that weighting, written without a multiply. The
+// even/even case reduces to `(u + u + u + u) / 4`, which is exactly `u`.
+//
 // A probe has a position, a distance interval and a set of directions. M8.4's
 // march has already taken every one of those directions over its own interval
 // and written a verdict and a distance into the hit buffer; this kernel turns
@@ -58,28 +71,31 @@ struct Params {
     height: u32,
     // Probes per row of the output, to turn a probe index into a texel.
     grid_w: u32,
-    // WGSL rounds a uniform struct to 16 bytes. Named rather than implicit, so
-    // the Rust side and this side agree in writing - `transport.wgsl`'s form.
-    pad_a: u32,
-    pad_b: u32,
-    pad_c: u32,
+    // The level above's probe grid, so this one can be looked up in it.
+    upper_w: u32,
+    upper_h: u32,
+    // Zero at the top of a cascade, and for a stage that stands alone. Then
+    // `far_*` below is what an escaping direction carries.
+    has_upper: u32,
     // What a direction that left the interval without meeting anything
-    // contributes. For a single stage this is the caller's far field; for a
-    // cascade it is what M8.5b replaces with the level above.
+    // contributes when there is no level above. The sky.
     far_r: f32,
     far_g: f32,
     far_b: f32,
     pad_d: f32,
 }
 
-// M8.4's ray, unchanged. Eight words, built by `Ray::new` on the CPU.
+// M8.4's ray. Eight words, built by `Ray::new` on the CPU. The sixth is the
+// one M8.5b gave a meaning to; the march still ignores it.
 struct Ray {
     from_x: i32,
     from_y: i32,
     dir_x: i32,
     dir_y: i32,
     length: i32,
-    pad0: i32,
+    // Set by `CascadeStage::rays` when this direction's interval began beyond
+    // the field's edge, so it met nothing and must carry the level above.
+    escaping: i32,
     pad1: i32,
     pad2: i32,
 }
@@ -98,6 +114,7 @@ struct Hit {
 @group(0) @binding(3) var<storage, read> hits: array<Hit>;
 @group(0) @binding(4) var radiance: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(5) var<uniform> params: Params;
+@group(0) @binding(6) var upper: texture_2d<f32>;
 
 const FIXED_SHIFT: u32 = 8u;
 const FIXED: i32 = 256;
@@ -117,6 +134,58 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
     let last_x = i32(params.width) - 1;
     let last_y = i32(params.height) - 1;
 
+    // What an escaping direction carries: the level above, interpolated to this
+    // probe, or the sky at the top of the cascade. Computed once - the aggregate
+    // form applies **one** value to every escaping direction, and that is exactly
+    // what distinguishes it from the directional form.
+    var up_r: f32 = params.far_r;
+    var up_g: f32 = params.far_g;
+    var up_b: f32 = params.far_b;
+    if (params.has_upper != 0u) {
+        let out_x = i32(probe % params.grid_w);
+        let out_y = i32(probe / params.grid_w);
+        let last_ux = i32(params.upper_w) - 1;
+        let last_uy = i32(params.upper_h) - 1;
+        // The aligned two-to-one cut: an even index lands on an upper probe and
+        // an odd one lands halfway between two. Sampling `x0` twice where the
+        // index is even is what turns the weights 1, 1/2 and 1/4 into one sum
+        // over four samples - no multiply, and the even/even case is exact.
+        let x0 = clamp(out_x >> 1, 0, last_ux);
+        let y0 = clamp(out_y >> 1, 0, last_uy);
+        let x1 = clamp((out_x >> 1) + (out_x & 1), 0, last_ux);
+        let y1 = clamp((out_y >> 1) + (out_y & 1), 0, last_uy);
+        let u00 = textureLoad(upper, vec2<i32>(x0, y0), 0);
+        let u10 = textureLoad(upper, vec2<i32>(x1, y0), 0);
+        let u01 = textureLoad(upper, vec2<i32>(x0, y1), 0);
+        let u11 = textureLoad(upper, vec2<i32>(x1, y1), 0);
+        // **This block is where M8.5b measured a cross-backend divergence, and
+        // the form below is not what fixes it - nothing here does.** Combining
+        // four upper probes returns two different fields over six
+        // adapter/backend pairs, about twelve ULP apart; combining *two*
+        // (`(u00 + u10) / 2`) returns one field on all six; and a pure lookup
+        // (`u00`) returns one field on all six. Every level standing alone
+        // agrees, and so does the distance field, so the divergence enters here
+        // and nowhere else.
+        //
+        // **The mechanism is not identified.** There is no `f32` multiply in
+        // this block, so ADR-0051's rule does not forbid it, and the obvious
+        // guess - that a four-term sum is reassociated - was tested and
+        // **refuted**: the halved form below and the flat
+        // `((u00 + u10) + (u01 + u11)) / 4` return bit-identical values on every
+        // adapter, and both split the same way. The report hands this over as a
+        // finding, and an amendment to ADR-0051 is due.
+        //
+        // The halved form is kept because it is the better of two equals: two
+        // equal samples halve to exactly one of them, so the weights 1, 1/2 and
+        // 1/4 stay exact at every step rather than only at the end.
+        let top = (u00 + u10) / 2.0;
+        let bottom = (u01 + u11) / 2.0;
+        let total = (top + bottom) / 2.0;
+        up_r = total.x;
+        up_g = total.y;
+        up_b = total.z;
+    }
+
     var sum_r: f32 = 0.0;
     var sum_g: f32 = 0.0;
     var sum_b: f32 = 0.0;
@@ -129,26 +198,27 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
             break;
         }
         let hit = hits[base + k];
+        let ray = rays[base + k];
 
         var r: f32 = 0.0;
         var g: f32 = 0.0;
         var b: f32 = 0.0;
 
-        if (hit.verdict == VISIBLE) {
-            // The direction left its interval without meeting anything, so what
-            // it carries is whatever lies beyond - and beyond is the level
-            // above, which this stage does not have. `escaped` records how much
-            // of the answer is therefore still owed upward.
-            r = params.far_r;
-            g = params.far_g;
-            b = params.far_b;
+        if (ray.escaping != 0 || hit.verdict == VISIBLE) {
+            // The direction left its interval without meeting anything - either
+            // by reaching the far end, or by leaving the field before the
+            // interval began. What it carries is whatever lies beyond, which is
+            // the level above. `escaped` records how much of the answer this
+            // level did not itself supply.
+            r = up_r;
+            g = up_g;
+            b = up_b;
             escaped = escaped + 1.0;
         } else if (hit.verdict == BLOCKED) {
             // Where the march stopped, in the same fixed point it marched in.
             // Split across two statements so that no line multiplies and adds -
             // the arithmetic is integer either way, and the shape is what the
             // source guard reads.
-            let ray = rays[base + k];
             let advance_x = (ray.dir_x * hit.distance) / FIXED;
             let advance_y = (ray.dir_y * hit.distance) / FIXED;
             let px = ray.from_x + advance_x;

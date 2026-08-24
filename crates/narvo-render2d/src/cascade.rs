@@ -489,7 +489,26 @@ impl CascadeStage {
                     let t1 = f64::from(self.layout.far).min(exit);
                     let from = clip(p, d, t0, limits);
                     let to = clip(p, d, t1, limits);
-                    rays.push(Ray::new(from[0], from[1], to[0], to[1], width, height)?);
+                    let ray = Ray::new(from[0], from[1], to[0], to[1], width, height)?;
+                    // **The interval began beyond the field's edge**, so this
+                    // direction left the world before it started looking and has
+                    // met nothing. The clip has collapsed it to a zero-length ray
+                    // sitting on the border, and a zero-length ray cannot say
+                    // "nothing" - the march would answer about whichever texel the
+                    // border happens to hold, so an occluder on the edge would
+                    // bleed into every direction that exits there. The flag says
+                    // it instead.
+                    //
+                    // Unreachable from `OffscreenTarget::cascade_stage`, whose
+                    // `check_fits` refuses a probe closer to an edge than its own
+                    // near end - so `exit >= near` there for every direction. It
+                    // is a cascade that needs this, because an upper level's near
+                    // end is large and its probes still have to cover the field.
+                    rays.push(if f64::from(self.layout.near) >= exit {
+                        ray.escaping()
+                    } else {
+                        ray
+                    });
                 }
             }
         }
@@ -497,14 +516,24 @@ impl CascadeStage {
     }
 
     /// The forty-eight bytes the kernel's uniform holds.
-    fn params(&self, width: u32, height: u32) -> [u8; 48] {
+    ///
+    /// `upper` is the probe grid of the level above, or `None` for a stage that
+    /// stands alone and for the top of a cascade — which is the same case, and
+    /// is why the single stage and a cascade level are one kernel rather than
+    /// two. With `None` an escaping direction carries
+    /// [`StageLayout::far_radiance`]; with `Some` it carries the level above,
+    /// interpolated.
+    pub(crate) fn params(&self, width: u32, height: u32, upper: Option<[u32; 2]>) -> [u8; 48] {
         let mut bytes = [0_u8; 48];
         bytes[0..4].copy_from_slice(&self.probe_count().to_ne_bytes());
         bytes[4..8].copy_from_slice(&self.layout.directions.to_ne_bytes());
         bytes[8..12].copy_from_slice(&width.to_ne_bytes());
         bytes[12..16].copy_from_slice(&height.to_ne_bytes());
         bytes[16..20].copy_from_slice(&self.layout.probes[0].to_ne_bytes());
-        // Words five to seven are the shader's named padding and stay zero.
+        let [upper_w, upper_h] = upper.unwrap_or([1, 1]);
+        bytes[20..24].copy_from_slice(&upper_w.to_ne_bytes());
+        bytes[24..28].copy_from_slice(&upper_h.to_ne_bytes());
+        bytes[28..32].copy_from_slice(&u32::from(upper.is_some()).to_ne_bytes());
         bytes[32..36].copy_from_slice(&self.layout.far_radiance[0].to_ne_bytes());
         bytes[36..40].copy_from_slice(&self.layout.far_radiance[1].to_ne_bytes());
         bytes[40..44].copy_from_slice(&self.layout.far_radiance[2].to_ne_bytes());
@@ -695,6 +724,7 @@ impl CascadeKernel {
                     },
                     count: None,
                 },
+                read_texture(6),
             ],
         });
 
@@ -731,6 +761,10 @@ impl CascadeKernel {
     ///
     /// [`RenderError::InvalidSize`] if the probe grid cannot be a field, and
     /// [`RenderError::Readback`] if the copy back to the CPU fails.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a cascade level binds seven distinct resources and a flag; bundling them into a struct would name every one of them twice"
+    )]
     pub(crate) fn run(
         &self,
         field: &Field,
@@ -738,7 +772,42 @@ impl CascadeKernel {
         rays: &wgpu::Buffer,
         hits: &wgpu::Buffer,
         stage: &CascadeStage,
+        upper: &Field,
+        has_upper: bool,
     ) -> Result<RadianceField, RenderError> {
+        let layout = stage.layout();
+        let out = self.run_into_field(field, emission, rays, hits, stage, upper, has_upper)?;
+        Ok(RadianceField::from_texels(
+            layout.probes[0],
+            layout.probes[1],
+            out.read_back()?,
+        ))
+    }
+
+    /// [`Self::run`] without the read-back, leaving the radiance on the GPU.
+    ///
+    /// **M8.5b's split, and the same shape M8.5a gave `MarchKernel`.** A cascade
+    /// composes downward, so a level's radiance is the *next* level's input and
+    /// bringing it to the CPU in between would pay a round trip per level for
+    /// nothing. Only level zero is read back.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] if the probe grid cannot be a field.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a cascade level binds seven distinct resources and a flag; bundling them into a struct would name every one of them twice"
+    )]
+    pub(crate) fn run_into_field(
+        &self,
+        field: &Field,
+        emission: &Field,
+        rays: &wgpu::Buffer,
+        hits: &wgpu::Buffer,
+        stage: &CascadeStage,
+        upper: &Field,
+        has_upper: bool,
+    ) -> Result<Field, RenderError> {
         let layout = stage.layout();
         let out = Field::new(
             &self.device,
@@ -754,8 +823,12 @@ impl CascadeKernel {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        self.queue
-            .write_buffer(&uniform, 0, &stage.params(field.width(), field.height()));
+        let upper_grid = has_upper.then(|| [upper.width(), upper.height()]);
+        self.queue.write_buffer(
+            &uniform,
+            0,
+            &stage.params(field.width(), field.height(), upper_grid),
+        );
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("narvo cascade"),
@@ -785,6 +858,10 @@ impl CascadeKernel {
                     binding: 5,
                     resource: uniform.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(upper.view()),
+                },
             ],
         });
 
@@ -804,11 +881,7 @@ impl CascadeKernel {
         }
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        Ok(RadianceField::from_texels(
-            layout.probes[0],
-            layout.probes[1],
-            out.read_back()?,
-        ))
+        Ok(out)
     }
 }
 
@@ -1184,6 +1257,88 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **A direction whose interval begins outside the field is marked, and
+    /// one that begins inside is not.**
+    ///
+    /// The flag is M8.5b's, and it exists because the clip collapses such a
+    /// direction to a zero-length ray sitting on the border — where the march
+    /// would answer about whichever texel the border happens to hold. Without
+    /// the mark, an occluder on the field's edge bleeds into every upper-level
+    /// direction that exits there.
+    ///
+    /// Unreachable through `OffscreenTarget::cascade_stage`, whose `check_fits`
+    /// keeps every probe its own near end clear of the edges. A cascade cannot
+    /// afford that — an upper level's near end is large and its probes still
+    /// have to cover the field — which is why the flag is here and not a
+    /// refusal.
+    #[test]
+    fn a_direction_whose_interval_starts_outside_the_field_is_marked() {
+        // Probes along the top edge, with a near end that reaches past it.
+        let stage = CascadeStage::new(StageLayout {
+            origin: [8.0, 0.0],
+            spacing: 8.0,
+            probes: [4, 1],
+            near: 6.0,
+            far: 12.0,
+            directions: 128,
+            far_radiance: [0.0, 0.0, 0.0],
+        })
+        .expect("a sound layout");
+        let rays = stage
+            .rays(64, 64)
+            .expect("every endpoint is clipped inside");
+        let marked = rays.iter().filter(|ray| ray.is_escaping()).count();
+        assert!(
+            marked > 0,
+            "no direction was marked, although every probe sits on the top edge with a near end of six"
+        );
+        assert!(
+            marked < rays.len(),
+            "every direction was marked, so the mark is not distinguishing anything"
+        );
+        // Upward directions leave a probe on the top edge immediately, so they
+        // are the ones that must be marked. Direction k = 3 * D / 4 points at
+        // negative y under `(cos, sin)`.
+        assert!(
+            rays[3 * 128 / 4].is_escaping(),
+            "the straight-up direction from a probe on the top edge was not marked"
+        );
+        assert!(
+            !rays[0].is_escaping(),
+            "the straight-right direction from a probe eight texels inside the left edge was marked, although it has sixty texels of field ahead of it"
+        );
+
+        // The same grid moved inside, with a near end of zero, marks nothing:
+        // an interval that begins at a probe strictly inside the field cannot
+        // begin outside it.
+        //
+        // **The origin has to move as well as the near end**, and that is a
+        // measurement rather than a tidying: a probe sitting exactly on the top
+        // edge has `exit = 0` upward, so its interval is empty at *any* near end
+        // including zero, and marking it is right. The first version of this
+        // test asserted otherwise and was wrong.
+        let flush = CascadeStage::new(StageLayout {
+            origin: [8.0, 8.0],
+            spacing: 8.0,
+            probes: [4, 1],
+            near: 0.0,
+            far: 12.0,
+            directions: 128,
+            far_radiance: [0.0, 0.0, 0.0],
+        })
+        .expect("a sound layout");
+        assert_eq!(
+            flush
+                .rays(64, 64)
+                .expect("every endpoint is inside")
+                .iter()
+                .filter(|ray| ray.is_escaping())
+                .count(),
+            0,
+            "a near end of zero marked a direction, but an interval that starts at the probe cannot start outside the field"
+        );
     }
 
     // -- the emission map ---------------------------------------------------

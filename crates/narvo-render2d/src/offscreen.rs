@@ -13,6 +13,7 @@ use crate::compute::{self, FieldKernel};
 use crate::error::RenderError;
 use crate::field::{Field, FieldPair};
 use crate::gpu;
+use crate::hierarchy::{self, Cascade, DirectionalKernel, MergeForm};
 use crate::march::{MarchHit, MarchKernel, Ray, derived_budget};
 use crate::quad::QuadPipeline;
 use crate::sdf::{self, SeedMap, Seeds};
@@ -751,13 +752,216 @@ impl OffscreenTarget {
         let march = MarchKernel::new(&self.device, &self.queue);
         let (ray_buffer, hit_buffer) = march.dispatch(pair.read(), &rays, derived_budget(&rays));
 
+        // A stage that stands alone has no level above it, so an escaping
+        // direction carries `far_radiance` and the upper binding is a texel
+        // nothing reads. It is bound rather than made optional because a bind
+        // group layout is one shape.
+        let no_upper = self.field(1, 1, "narvo cascade no upper")?;
         CascadeKernel::new(&self.device, &self.queue).run(
             pair.read(),
             &emitter,
             &ray_buffer,
             &hit_buffer,
             stage,
+            &no_upper,
+            false,
         )
+    }
+
+    /// Runs a whole cascade and returns level zero's composed radiance.
+    ///
+    /// **M8.5b's capability.** Levels run **top down**: the top takes
+    /// [`CascadeLayout::sky`](crate::CascadeLayout::sky), and every level below
+    /// takes the composed radiance of the level above as what an escaping
+    /// direction carries. That ordering is not a preference — it is what lets the
+    /// composition be written without `escaped * upper`, whose product is
+    /// inexact and would fire ADR-0051's reopening. `hierarchy.rs`'s header
+    /// carries the argument.
+    ///
+    /// The distance field is flooded **once** and every level marches against
+    /// it, which is the one cost a cascade does not pay per level.
+    ///
+    /// # The two forms
+    ///
+    /// [`MergeForm::Aggregate`](crate::MergeForm::Aggregate) keeps one radiance
+    /// per probe and applies it to every escaping direction;
+    /// [`MergeForm::Directional`](crate::MergeForm::Directional) keeps one per
+    /// probe per direction and gives each escaping direction the four upper
+    /// directions covering its own arc. **Both are offered and neither is
+    /// preferred** — [`Cascade::budget`](crate::Cascade::budget) is what they
+    /// cost and M8.5b's report is what they differ by.
+    ///
+    /// # Errors
+    ///
+    /// - [`RenderError::EmissionSizeMismatch`] if the emission map is not the
+    ///   seed set's size.
+    /// - [`RenderError::InvalidSize`] if the cascade was validated against a
+    ///   field of another size than the one handed in here.
+    /// - [`RenderError::CascadeLevelTooLarge`] if a directional level exceeds
+    ///   one storage buffer binding.
+    /// - [`RenderError::Readback`] if the radiance cannot be copied back.
+    pub fn cascade(
+        &self,
+        seeds: &Seeds,
+        emission: &Emission,
+        cascade: &Cascade,
+        form: MergeForm,
+    ) -> Result<RadianceField, RenderError> {
+        let (width, height) = (seeds.width(), seeds.height());
+        if emission.width() != width || emission.height() != height {
+            return Err(RenderError::EmissionSizeMismatch {
+                seed_width: width,
+                seed_height: height,
+                emission_width: emission.width(),
+                emission_height: emission.height(),
+            });
+        }
+        if cascade.field() != [width, height] {
+            return Err(RenderError::InvalidSize {
+                width,
+                height,
+                max: Self::MAX_DIMENSION,
+            });
+        }
+        cascade.check_form(form)?;
+
+        let pair = self.flood(seeds)?;
+        let emitter = self.field(width, height, "narvo cascade emission")?;
+        emitter.write(emission.texels())?;
+        let march = MarchKernel::new(&self.device, &self.queue);
+
+        match form {
+            MergeForm::Aggregate => {
+                self.cascade_aggregate(cascade, pair.read(), &emitter, &march, width, height)
+            }
+            MergeForm::Directional => {
+                self.cascade_directional(cascade, pair.read(), &emitter, &march, width, height)
+            }
+        }
+    }
+
+    /// The aggregate merge: one radiance per probe, carried down as one value.
+    fn cascade_aggregate(
+        &self,
+        cascade: &Cascade,
+        field: &Field,
+        emitter: &Field,
+        march: &MarchKernel,
+        width: u32,
+        height: u32,
+    ) -> Result<RadianceField, RenderError> {
+        let kernel = CascadeKernel::new(&self.device, &self.queue);
+        let mut upper: Option<Field> = None;
+        for level in (0..cascade.level_count()).rev() {
+            let stage = cascade.level(level).expect("a level below the count");
+            let rays = stage.rays(width, height)?;
+            let (ray_buffer, hit_buffer) = march.dispatch(field, &rays, derived_budget(&rays));
+            let placeholder;
+            let bound = match upper.as_ref() {
+                Some(field) => field,
+                None => {
+                    placeholder = self.field(1, 1, "narvo cascade no upper")?;
+                    &placeholder
+                }
+            };
+            let composed = kernel.run_into_field(
+                field,
+                emitter,
+                &ray_buffer,
+                &hit_buffer,
+                stage,
+                bound,
+                upper.is_some(),
+            )?;
+            let layout = stage.layout();
+            if level == 0 {
+                // Only level zero crosses to the CPU. Every level above it is
+                // read by the level below, on the GPU, which is the whole reason
+                // `run_into_field` exists.
+                return Ok(RadianceField::from_texels(
+                    layout.probes[0],
+                    layout.probes[1],
+                    composed.read_back()?,
+                ));
+            }
+            upper = Some(composed);
+        }
+        unreachable!("a cascade has at least one level, so level zero was reached")
+    }
+
+    /// The directional merge: one radiance per probe per direction.
+    fn cascade_directional(
+        &self,
+        cascade: &Cascade,
+        field: &Field,
+        emitter: &Field,
+        march: &MarchKernel,
+        width: u32,
+        height: u32,
+    ) -> Result<RadianceField, RenderError> {
+        let kernel = DirectionalKernel::new(&self.device, &self.queue);
+        let mut upper: Option<wgpu::Buffer> = None;
+        for level in (0..cascade.level_count()).rev() {
+            let stage = cascade.level(level).expect("a level below the count");
+            let layout = stage.layout();
+            let rays = stage.rays(width, height)?;
+            let (ray_buffer, hit_buffer) = march.dispatch(field, &rays, derived_budget(&rays));
+
+            let entries = u64::from(stage.ray_count());
+            let outgoing = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("narvo cascade directional radiance"),
+                size: entries * hierarchy::ENTRY_BYTES,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let placeholder;
+            let bound = match upper.as_ref() {
+                Some(buffer) => buffer,
+                None => {
+                    placeholder = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("narvo cascade no upper"),
+                        size: hierarchy::ENTRY_BYTES,
+                        usage: wgpu::BufferUsages::STORAGE,
+                        mapped_at_creation: false,
+                    });
+                    &placeholder
+                }
+            };
+            let mean = Field::new(
+                &self.device,
+                &self.queue,
+                layout.probes[0],
+                layout.probes[1],
+                "narvo cascade directional mean",
+            )?;
+            let upper_grid = upper.as_ref().map(|_| {
+                let above = cascade
+                    .level(level + 1)
+                    .expect("a level above exists whenever an upper buffer does")
+                    .layout();
+                above.probes
+            });
+            kernel.run(
+                field,
+                emitter,
+                &ray_buffer,
+                &hit_buffer,
+                &mean,
+                bound,
+                &outgoing,
+                &stage.params(width, height, upper_grid),
+                stage.probe_count(),
+            );
+            if level == 0 {
+                return Ok(RadianceField::from_texels(
+                    layout.probes[0],
+                    layout.probes[1],
+                    mean.read_back()?,
+                ));
+            }
+            upper = Some(outgoing);
+        }
+        unreachable!("a cascade has at least one level, so level zero was reached")
     }
 
     /// Copies whatever the target currently holds back to the CPU.

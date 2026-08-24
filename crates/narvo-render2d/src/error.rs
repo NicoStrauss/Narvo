@@ -247,6 +247,22 @@ pub enum RenderError {
         /// Height of that map.
         height: u32,
     },
+    /// A cascade level's per-direction radiance is more than one storage buffer
+    /// binding can hold.
+    ///
+    /// Only the **directional** merge can meet this: it keeps one entry per
+    /// probe per direction in a single buffer, where the aggregate merge keeps
+    /// one texel per probe in a field and is bounded by the texture dimension
+    /// instead. So this is the ceiling that separates the two forms rather than
+    /// one they share.
+    CascadeLevelTooLarge {
+        /// Which level, counting from zero at the bottom.
+        level: u32,
+        /// Bytes that level's entries would occupy.
+        bytes: u64,
+        /// The most one binding holds.
+        limit: u64,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -389,6 +405,17 @@ impl fmt::Display for RenderError {
                 "an emission value at ({x}, {y}) is outside a {width}x{height} map: \
                  columns run 0..{width} and rows 0..{height}"
             ),
+            Self::CascadeLevelTooLarge {
+                level,
+                bytes,
+                limit,
+            } => write!(
+                f,
+                "level {level} of a directional cascade needs {bytes} bytes of radiance, \
+                 and one storage buffer binding holds {limit}: use a coarser probe \
+                 spacing, fewer levels, or the aggregate merge, which keeps one texel \
+                 per probe instead of one per direction"
+            ),
             Self::NoAdapter { attempts } => write!(
                 f,
                 "no GPU adapter available; tried {attempts}. On a headless machine, \
@@ -457,6 +484,7 @@ impl Error for RenderError {
             | Self::EmissionSizeMismatch { .. }
             | Self::ProbeOutsideField { .. }
             | Self::EmissionOutsideField { .. }
+            | Self::CascadeLevelTooLarge { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
             | Self::NoAdapter { .. } => None,

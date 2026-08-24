@@ -67,7 +67,10 @@ struct Ray {
     dir_y: i32,
     // How far it is to the far end, in fixed units.
     length: i32,
-    pad0: i32,
+    // Set when the ray's interval lies entirely outside the field. **This
+    // kernel does not read it** - it is M8.5b's, and it is declared here only
+    // so the two ends agree in writing about what the sixth word is.
+    escaping: i32,
     pad1: i32,
     pad2: i32,
 }
