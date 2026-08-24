@@ -1,0 +1,5 @@
+# Formatting is deliberately left at rustfmt's defaults — no style overrides.
+#
+# The file exists anyway so the decision is explicit and visible: formatting is
+# not up for discussion in review, `cargo fmt --all` is always safe to run, and
+# every change to the style of this workspace has to show up as a diff here.

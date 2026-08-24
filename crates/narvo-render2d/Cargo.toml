@@ -1,0 +1,85 @@
+[package]
+name = "narvo-render2d"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Everything that drags in a graphics stack sits behind `gpu`. CLAUDE.md requires
+# headless builds to be free of wgpu, and a feature is what makes that provable
+# mechanically - instead of by reading the source and hoping.
+#
+# The command needs `--edges normal` since M3.22:
+#
+#     cargo tree -p narvo-render2d --no-default-features --edges normal
+#
+# Without the flag it now prints the whole wgpu stack, and that is correct rather
+# than a regression: the dev-dependency on `narvo-testkit` closes a cycle back
+# to this crate with default features, so the *dev* graph legitimately carries
+# `gpu`. The production graph does not, which is what the requirement is about.
+# CI's own headless guard is on `narvo-app` and already passes the flag
+# (`.github/workflows/ci.yml`).
+[features]
+default = ["gpu"]
+gpu = [
+    "dep:wgpu",
+    "dep:pollster",
+    "dep:image",
+    "dep:raw-window-handle",
+    "dep:ab_glyph",
+    "dep:serde",
+]
+
+[dependencies]
+narvo-core = { workspace = true }
+
+wgpu = { version = "30.0.0", optional = true }
+# Window and display handle traits, so `WindowTarget` can accept a window
+# without a `wgpu` type appearing in this crate's public API. Must resolve to
+# the same version wgpu uses, which cargo unifies as long as the ranges agree.
+raw-window-handle = { version = "0.6", optional = true }
+# Blocks on wgpu's adapter and device futures. The offscreen path has no async
+# runtime and does not want one.
+pollster = { version = "1.0.1", optional = true }
+# PNG only. The other decoders would be dead weight in the dependency tree and
+# in every licence and advisory check that walks it.
+image = { version = "0.25.10", optional = true, default-features = false, features = [
+    "png",
+] }
+
+# The glyph rasteriser, chosen in D10 (`ProjektPlan.md` §11) on the evidence of
+# probe M3.33: byte-identical output across Windows and WSL at three sizes and
+# two optimisation levels, down to the raw `f32` coverage.
+#
+# **It lived in `narvo-testkit` until M6.6b** (ADR-0038), on the reasoning that
+# a glyph atlas was test and content infrastructure. That stopped being true when
+# the human decided the native text path over egui for the debug overlay: text is
+# a shipped capability now, and layout consumes the region table, so both had to
+# come to a production crate together.
+#
+# **What this does not mean is that a production graph gains `ab_glyph`.** One
+# already had it: on Linux `narvo-app` reaches it through
+# `winit -> sctk-adwaita -> ab_glyph`, which is how Wayland client-side
+# decorations draw a titlebar. Check it with
+# `cargo tree -p narvo-app -e normal --target x86_64-unknown-linux-gnu`; the
+# host-target form does not show it. `Cargo.lock` gains no `[[package]]` block
+# from this line, and the version stays the one probe M3.33 measured.
+#
+# Optional and inside `gpu`, like everything else here: the modules that use it
+# need `Pixels` and `SpriteInstance`, which are themselves gpu-gated.
+ab_glyph = { version = "0.2.32", optional = true }
+
+# The region table's serialized form, for the round trip its own test performs.
+# Already in the workspace (`narvo-ecs` carries it), so no external crate is
+# added. Optional for the same reason `ab_glyph` is.
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+
+[dev-dependencies]
+narvo-testkit = { workspace = true }
+
+# The other half of the region table's round trip, and **dev only**: the single
+# caller is inside `glyph_atlas`'s own `#[cfg(test)]` module. RON is ADR-0006's
+# format.
+ron = "0.12.2"

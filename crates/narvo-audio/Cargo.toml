@@ -1,0 +1,56 @@
+[package]
+name = "narvo-audio"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Everything that can touch an audio device hangs off `device`, and it is **on by
+# default** — which is the opposite of what a first guess would pick and is the
+# whole point.
+#
+# M5.6b measured the reason. An optional dependency whose feature nothing
+# activates is absent from cargo-deny's graph: `cargo deny check` reported
+# `licenses ok` on a workspace that had just gained kira, because the feature was
+# off. Nothing in this repository runs `--all-features`, so an opt-in cut would
+# have put an MPL-2.0 crate in `Cargo.lock` with every check green. CLAUDE.md
+# carries the rule that came out of it.
+#
+# The headless build stays clean the other way round: `narvo-app` takes this
+# crate with `default-features = false` and turns `device` back on from its own
+# `render` feature, so `cargo tree -p narvo-app --no-default-features` has
+# neither kira nor cpal in it. The licence check sees the crate always; the
+# headless binary never does.
+[features]
+default = ["device"]
+device = ["dep:kira"]
+
+[dependencies]
+# The audio backend, chosen in ADR-0028 by measurement against the Scope B
+# profile: channels, per-channel volume, music layers and volume tweens.
+#
+#   * **Rule 1 decided it, four of four against rodio's three.** A tweened,
+#     per-channel, runtime volume change is one call —
+#     `set_volume(&mut self, volume: impl Into<Value<Decibels>>, tween: Tween)`
+#     (`kira-0.12.3/src/track/sub/handle.rs:88`). rodio's `set_volume` is
+#     immediate and its fades are `Source` adapters fixed when a source is
+#     wrapped, so the same thing would have meant stepping a volume from the
+#     frame loop by hand — the in-house tween the measurement's halt rule exists
+#     to prevent.
+#   * **Cost was near enough to decide nothing:** 25 crates against 24, 12.600 s
+#     against 12.798 s clean.
+#   * **`default-features = false` with `["cpal"]` alone is a licence
+#     constraint, not a preference.** Every one of kira's six format features
+#     expands to `["symphonia", "symphonia/<format>"]`
+#     (`kira-0.12.3/Cargo.toml:105-128`), and symphonia is MPL-2.0. Nothing here
+#     decodes anything: the sounds are synthesised in `sounds.rs` and handed to
+#     kira as frames, so a decoder would be dead weight even if it were licensed
+#     the way this workspace needs.
+#
+# `triple_buffer` (MPL-2.0) comes in unconditionally underneath it and is
+# admitted by name in `deny.toml`; ADR-0028's amendment carries that finding.
+kira = { version = "0.12.3", default-features = false, features = [
+    "cpal",
+], optional = true }

@@ -1,0 +1,64 @@
+// The determinism suite's scene case. **Frozen.**
+//
+// It began as a copy of `crates/narvo-scene/scenes/example.ron` and is not the
+// same file any more the moment either changes, which is the point. The specimen
+// next door is *meant* to grow: an M4.1 test asserts it carries every registered
+// component, so registering an eighth type edits it. A determinism case needs
+// the opposite — the same bytes today and in a year — because its whole value is
+// that two platforms and two commits compute the same thing from the same input.
+//
+// It lives beside the runner rather than beside the format because the runner is
+// what loads it and the suite is what drives the runner. Editing it is allowed
+// and is a deliberate act: the case's state hashes move, which is visible, and
+// any recording made against the old bytes stops replaying with the message
+// ADR-0019 specifies. That refusal is the feature, not an obstacle.
+//
+// What it exercises, on purpose: a forward reference (the camera points at an
+// entity declared last), an anonymous entity, and — through `compose_camera` —
+// a follow converging on its target and a shake decaying to rest, so the world
+// actually changes over the case's ticks instead of standing still.
+Scene(
+    entities: [
+        (
+            name: "eye",
+            components: {
+                "camera": (x: 0.0, y: 0.0, zoom: 2.0),
+                "follow": (smoothing: 0.5, x: 0.0, y: 0.0, lost: false),
+                "shake": (
+                    amplitude: 4.0,
+                    frequency: 1.0,
+                    decay: 0.5,
+                    phase: 0.0,
+                    cutoff: 0.25,
+                    base_x: 0.0,
+                    base_y: 0.0,
+                ),
+            },
+            // `follow.target` is not written in the body above: it is filled in
+            // here, by name. The loader resolves the name to the handle of the
+            // entity that ends up in that slot.
+            refs: { "follow": { "target": "player" } },
+        ),
+        (
+            // Anonymous: nothing points at it, so it needs no name.
+            components: {
+                "transform": (x: -8.0, y: 0.5, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "layer": (depth: -1.0),
+            },
+        ),
+        (
+            name: "player",
+            components: {
+                "transform": (x: 3.5, y: -2.25, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "layer": (depth: 1.0),
+                // 1 is `Sampling::LINEAR`; the mapping is on `Sampling` itself,
+                // written as an integer for ADR-0014's reason.
+                "sampling": (filter: 1),
+                // The state of `Rng::new(1)`, written out. A generator is
+                // ordinary world state (ADR-0010), so a scene authors it like
+                // any other component - and the two numbers are the whole of it.
+                "rng": (state: 12728272447693586011, increment: 1),
+            },
+        ),
+    ],
+)

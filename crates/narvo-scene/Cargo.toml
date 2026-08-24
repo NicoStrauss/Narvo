@@ -1,0 +1,30 @@
+[package]
+name = "narvo-scene"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The registry, the world and the canonical dump. A scene is a world written
+# down, so this crate cannot exist without the crate that owns what a world is.
+narvo-ecs.workspace = true
+
+# The scene file's own syntax, and the format every component body inside it is
+# written in (ADR-0006, ADR-0018). One `ron` for both halves is the point: a
+# component body in a scene file is byte for byte what the registry's
+# type-erased path produces, so there is no second rendering to keep in step.
+ron = "0.12.2"
+
+# The scene file's outer shape - the entity list, the names, the component map -
+# is deserialized with derived impls like anything else.
+serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+# The round-trip property of M4's closing criterion is a statement about *every*
+# scene-constructible world, so the test that carries it generates them rather
+# than listing them. `proptest` shrinks a counterexample to a minimal world,
+# which is what turns a red run into a diagnosis.
+proptest = "1.11.0"

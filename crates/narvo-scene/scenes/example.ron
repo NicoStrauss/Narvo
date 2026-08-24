@@ -1,0 +1,138 @@
+// A worked example of the scene format, and the specimen `scene.rs` loads
+// against a world built by hand. Every component type the engine registers
+// appears at least once, so a type that stopped round-tripping would show up
+// here rather than only in a generated case.
+//
+// It lives beside the crate that defines the format rather than in a
+// repository-level `scenes/`, because it is not game content: it is the
+// format's own specimen, and a test resolves it from `CARGO_MANIFEST_DIR` so
+// `cargo test -p narvo-scene` needs nothing outside this directory. Where a
+// game's scenes will live is an M4 question this file does not answer.
+//
+// The order below is deliberate: the camera comes first and points at an entity
+// declared last, because a reference may point forwards. The middle entity has
+// no name, because a name exists only so that something can refer to it.
+Scene(
+    entities: [
+        (
+            name: "eye",
+            components: {
+                "camera": (x: 0.0, y: 0.0, zoom: 2.0),
+                "follow": (smoothing: 0.5, x: 0.0, y: 0.0, lost: false),
+                "shake": (
+                    amplitude: 4.0,
+                    frequency: 1.0,
+                    decay: 0.5,
+                    phase: 0.0,
+                    cutoff: 0.25,
+                    base_x: 0.0,
+                    base_y: 0.0,
+                ),
+            },
+            // `follow.target` is not written in the body above: it is filled in
+            // here, by name. The loader resolves the name to the handle of the
+            // entity that ends up in that slot.
+            refs: { "follow": { "target": "player" } },
+        ),
+        (
+            // Anonymous: nothing points at it, so it needs no name.
+            components: {
+                "transform": (x: -8.0, y: 0.5, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "layer": (depth: -1.0),
+                // A rigid body, and the whole of what crosses a tick boundary
+                // for it (M5b.3a, ADR-0029). `kind: 1` is `RigidBody::DYNAMIC`;
+                // the mapping is on `RigidBody` itself, an integer rather than
+                // an enum for ADR-0014's reason - the same one `sampling` gives
+                // below. The rotation is a `(cos, sin)` pair and not an angle,
+                // because an angle round trip is lossy and its trigonometry is
+                // outside the domain `enhanced-determinism` covers.
+                //
+                // The body carries its own position: it does not read the
+                // `transform` above, which is here because this entity is drawn.
+                "rigidbody": (
+                    kind: 1,
+                    half_x: 0.5,
+                    half_y: 0.25,
+                    x: -8.0,
+                    y: 0.5,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: 0.0,
+                    vel_y: 0.0,
+                    angvel: 0.0,
+                    restitution: 0.0,
+                    friction: 0.5,
+                    density: 1.0,
+                ),
+            },
+        ),
+        (
+            name: "player",
+            components: {
+                "transform": (x: 3.5, y: -2.25, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "layer": (depth: 1.0),
+                // 1 is `Sampling::LINEAR`; the mapping is on `Sampling` itself,
+                // written as an integer for ADR-0014's reason.
+                "sampling": (filter: 1),
+                // The state of `Rng::new(1)`, written out. A generator is
+                // ordinary world state (ADR-0010), so a scene authors it like
+                // any other component - and the two numbers are the whole of it.
+                "rng": (state: 12728272447693586011, increment: 1),
+                // Which packed atlas region this entity draws, by name (M4.8).
+                // The name is a file stem under the scene's `assets/`, and it is
+                // resolved when a runner has an atlas - the format itself knows
+                // nothing about atlases, and a specimen with no assets beside it
+                // still loads. That is the point: a region name is a string in a
+                // component like any other value.
+                "sprite": (region: "hero"),
+                // What a click on this entity means (M5.4). The rectangle is
+                // axis-parallel, measured in world units from the transform's
+                // position, and it ignores rotation and scale - one rule rather
+                // than a half-rule that would look like it tracked the sprite.
+                // The action name is checked against the identifier charset when
+                // a runner loads the scene, not by the format: a component is
+                // storage, and the rule lives in `narvo-input`, which the
+                // format crate does not depend on.
+                "hitrect": (half_width: 16.0, half_height: 16.0, action: "select", value: 1),
+                // How many of that action have arrived (M5.5). The counter is
+                // world state, so a click that increments it is reproducible
+                // from a recording; the system that increments it lives in
+                // `narvo-app`, because counting means reading an event buffer
+                // whose payload type this crate's registry cannot name.
+                "tally": (action: "select", count: 0),
+                // The colour this entity's texels are multiplied by (M6b.3).
+                // Four bare floats for ADR-0014's reason, the same one
+                // `sampling` and `rigidbody` give above, and the multiplication
+                // happens in linear light because the atlas and the render
+                // target are both sRGB formats - so 0.5 is half the *light*, not
+                // half the stored byte.
+                //
+                // **This entry is here because a guard demands it, not because
+                // the format does.** An entity without a `tint` draws at
+                // `Tint::DEFAULT`, all ones, exactly as every scene did before
+                // this component existed;
+                // `the_specimen_uses_every_registered_component` requires the
+                // specimen to carry every registered type at least once, so a
+                // type that stopped round-tripping would show up here. The
+                // alpha is 1.0 rather than a fade, because a specimen is read
+                // as an example and a half-transparent hero would look like
+                // advice.
+                "tint": (red: 1.0, green: 0.75, blue: 0.5, alpha: 1.0),
+                // A burst of particles, as the six scalars they are computed
+                // from (M6b.7, ADR-0044). Nothing per particle is stored: the
+                // world carries the emitter, `age` is what one system advances,
+                // and `Burst::particle` computes where each spark is from that.
+                // Two thousand sparks would spell exactly the line below.
+                //
+                // **This entry is here for the same reason `tint` above is** —
+                // `the_specimen_uses_every_registered_component` requires the
+                // specimen to carry every registered type at least once. It is
+                // written **spent** (`age` at `life`) so the specimen is a
+                // still picture rather than an effect halfway through playing:
+                // a reader looking for an example of the format should not have
+                // to wonder which frame of a burst they are looking at.
+                "burst": (count: 24, seed: 7, age: 12, life: 12, speed: 1.5, spread: 1.0),
+            },
+        ),
+    ],
+)

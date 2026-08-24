@@ -1,0 +1,157 @@
+[package]
+name = "narvo-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The crate is `narvo-app`, but the executable it produces is just `narvo`.
+[[bin]]
+name = "narvo"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+# Everything that needs a device hangs off `render`, which is on by default. A
+# build without it has no wgpu and no winit anywhere in its dependency tree, and
+# the headless CI job asserts exactly that with `cargo tree` rather than trusting
+# it.
+#
+# **Since M5.6c the gate carries a second class**, and the name `render` is now
+# one word narrower than what it does: it also turns on `narvo-audio/device`,
+# and so keeps kira, cpal and — on Linux — an ALSA link dependency out of the
+# same tree. `FORBIDDEN_IN_HEADLESS` lists all seven names together for that
+# reason. The feature was not renamed: `render` is what every recording, every
+# workflow step and every `--no-default-features` line already says, and a
+# rename would move all of them to make one comment shorter.
+#
+# The point of the gate is that the headless path stays buildable on a machine -
+# or in a container - with no graphics stack and no sound card at all.
+[features]
+default = ["render"]
+render = [
+    "dep:narvo-render2d",
+    "dep:narvo-view2d",
+    "dep:winit",
+    "narvo-audio/device",
+]
+
+# The agent transport: a localhost TCP listener (D20). **Off by default, and that
+# is the decision rather than a default** — the D20 survey measured that a
+# loopback listener has no access check on either platform, so a release binary
+# must not contain one. `--ipc` exists only in a build that asked for this.
+#
+# It activates no optional dependency, so it is nothing like the `device` gate:
+# nothing enters `Cargo.lock`, nothing enters the headless tree, and the M5.6b
+# trap — an `optional` dependency being absent from cargo-deny's graph because no
+# feature activates it — cannot apply, because there is no dependency to be
+# absent. `cargo deny list` before and after this feature existed is identical.
+#
+# The verification set builds two configurations of this crate and neither has
+# this feature on, so a tenth step exists to build and test the one that does.
+# See `xtask/src/main.rs` and CLAUDE.md, changed in the same commit as this line.
+ipc = []
+
+[dependencies]
+narvo-assets = { workspace = true }
+narvo-core = { workspace = true }
+narvo-ecs = { workspace = true }
+
+# `InputEvent` and, from M5.3, the device mapping. It moved out of `narvo-ecs`
+# with M5.1 (ADR-0012's own consequence, carried out in ADR-0025), so this edge
+# replaces a re-export rather than adding a capability. Nothing graphical comes
+# with it - `ron` and `serde`, both already in the tree - so the headless tree
+# stays as short as the CI check demands.
+narvo-input = { workspace = true }
+
+# The scene format, for the `scene-file` mode: the first initial state in this
+# crate that is written in a file rather than in Rust (ADR-0019). Nothing
+# graphical comes with it, so the headless tree stays as short as the CI check
+# demands.
+narvo-scene = { workspace = true }
+
+# The cue vocabulary, and — only through `render` — the backend that plays it.
+#
+# The workspace routes this crate with `default-features = false` (see the root
+# manifest for why it has to be there and not here), so this edge brings the cue
+# types and nothing else. `render` above adds `narvo-audio/device` back, which
+# is what keeps `cargo tree -p narvo-app --no-default-features --edges normal`
+# free of kira and cpal while `cargo deny check` still inspects them.
+#
+# A normal dependency rather than an optional one, on purpose: the cue
+# extraction in `audio.rs` is ordinary read-only logic over a `World`, and the
+# three headless steps of the verification set compile and test it like any
+# other module. Gating it on `render` would have put it outside exactly the
+# steps that would catch a mistake in it — the M4.8 shape CLAUDE.md records.
+narvo-audio = { workspace = true }
+
+# The physics facade, for the mapping in `physics.rs`.
+#
+# The edge is here and nowhere else, and that is the decision rather than an
+# accident of layering: `narvo-ecs` owns `RigidBody`, which is bare scalars and
+# needs no physics types, so it stays free of this dependency; only the crate
+# that has to name `Body` takes it. That is ADR-0015's arrangement — the same one
+# the sprite extraction and the audio cue mapping already sit in — and ADR-0029
+# names this crate for it in as many words.
+#
+# A normal dependency rather than an optional one: physics needs no device, so
+# the three headless steps of the verification set compile and test the mapping
+# like any other module. Gating it on `render` would put it outside exactly the
+# steps that would catch a mistake in it — the M4.8 shape CLAUDE.md records, and
+# the reason `narvo-audio` above is routed the same way.
+narvo-physics2d = { workspace = true }
+
+# The agent protocol's vocabulary, for the read seam in `ipc.rs`.
+#
+# The edge is here and nowhere else, which is the same arrangement `narvo-audio`
+# and `narvo-physics2d` above sit in and the one ADR-0030 asks for: `narvo-ipc`
+# is a leaf that names no `World`, `narvo-ecs` names no protocol, and the crate
+# that sees both sides is the one that maps between them. An edge in either of
+# the other two directions would put `hecs` under every future MCP client or the
+# protocol under every world.
+#
+# A normal dependency rather than an optional one, and for the reason the two
+# above give: answering a read is ordinary logic over a `&World`, so the three
+# headless steps of the verification set compile and test it like any other
+# module. It brings `serde_json` into the headless tree — new there, already in
+# `Cargo.lock`, and none of the seven names `FORBIDDEN_IN_HEADLESS` lists.
+narvo-ipc = { workspace = true }
+
+# The demo simulation's components are registered for the canonical state dump,
+# which requires them to be serializable. Not a new crate in this workspace -
+# `narvo-ecs` already depends on it - and it brings nothing graphical with it,
+# so the headless tree stays as short as the CI check demands.
+serde = { version = "1.0.229", features = ["derive"] }
+
+narvo-render2d = { workspace = true, optional = true }
+
+# The seam between a world and the renderer: the extraction and the hit test
+# (ADR-0041). It moved out of this crate in M6b.1 — it used to be `sprite_batch`
+# and `hit` here — because `narvo-app` is a binary with no library target, so
+# an external consumer could not reach either. ADR-0015 named that as the thing
+# that would stop working the moment a second consumer needed the extraction.
+#
+# **Optional, and behind `render` rather than a normal dependency.** That is not
+# the arrangement `narvo-audio`, `narvo-physics2d` and `narvo-ipc` sit in, and
+# the difference is that those three name no device: this one depends on
+# `narvo-render2d` with default features, so a normal edge would put wgpu, naga
+# and `raw-window-handle` into the headless tree and step nine of the
+# verification set would say so. The M4.8 shape the other three avoid — logic
+# gated out of the checks that would catch a mistake in it — does not apply,
+# because every one of this crate's tests moved with it and runs in step two.
+narvo-view2d = { workspace = true, optional = true }
+
+winit = { version = "0.30.13", optional = true }
+
+# The shared test fixtures (D16, ADR-0016). A dev-dependency: nothing here is
+# reachable from a production build, and `cargo tree` shows it outside the
+# normal graph.
+[dev-dependencies]
+narvo-testkit = { workspace = true }
+
+# The PNG *encoder*, so tests can write the assets they then load (ADR-0024:
+# nothing binary is committed). A dev-dependency and never a normal one — this
+# crate decodes nothing itself, `narvo-assets` does, and the normal graph has
+# no business carrying an encoder. Already in the lock file; see
+# `narvo-assets/Cargo.toml` for the measurement that chose it.
+png = { version = "0.18.1", default-features = false }

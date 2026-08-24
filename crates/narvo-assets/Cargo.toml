@@ -1,0 +1,58 @@
+[package]
+name = "narvo-assets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The SHA-256 the atlas anchor is taken with, and the crate that holds what has
+# no dependencies of its own. The file watcher is a later task; the decoder
+# arrived in M4.8, below.
+narvo-core = { workspace = true }
+
+# The PNG decoder and encoder, chosen in ADR-0024 by measurement rather than by
+# preference. Three numbers decided it against `image`, which was the obvious
+# alternative because `narvo-render2d` already carries it:
+#
+#   * **new crates in the lock file: zero.** Every one of png's transitive
+#     dependencies was already there — `image` pulls png in, so the workspace
+#     has carried this exact subtree since M3. `git diff Cargo.lock` adds no
+#     `[[package]]` block.
+#   * **clean build: 3.60 s against image's 19.02 s**, measured on the reference
+#     machine in an isolated probe crate.
+#   * **the headless guard.** `.github/workflows/ci.yml` fails the build if
+#     `cargo tree -p narvo-app --no-default-features --edges normal` contains
+#     `image`. This crate is in that tree, so `image` here would trip a guard
+#     that exists to keep the graphics stack out of the headless build — and
+#     what `image` adds over png is `moxcms`, a colour-management stack this
+#     task must not use.
+#
+# Default features: png's are `[]` for the decoder and encoder both, so nothing
+# is switched off by asking for none. The encoder is needed as much as the
+# decoder — M4.8's end-to-end test writes its own PNGs rather than committing
+# any (ADR-0024).
+png = { version = "0.18.1", default-features = false }
+
+[dev-dependencies]
+# The encode → decode round trip over generated content, which is a property
+# rather than a handful of cases: any RGBA8 image, written and read back, must
+# come out as its own premultiplication. Already in the lock file (`narvo-scene`
+# carries it), so this adds no `[[package]]` block.
+proptest = "1.11.0"
+
+# `check_region_padding` and `Pixels`, for the contract test, and the renderer
+# itself for the end-to-end consumer proof.
+#
+# A **dev**-dependency and never a normal one. `narvo-app`'s headless job
+# asserts with `cargo tree -p narvo-app --edges normal` that no graphics crate
+# is reachable, and `narvo-app` depends on this crate; a production edge to
+# `narvo-render2d` here would put wgpu into that tree. A dev edge does not
+# appear on a normal edge, which is the same shape ADR-0016 recorded for
+# `narvo-testkit`. There is no cycle: `narvo-render2d` does not depend on this
+# crate in either direction.
+narvo-render2d = { workspace = true }
+
+

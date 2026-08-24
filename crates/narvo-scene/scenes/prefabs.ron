@@ -1,0 +1,55 @@
+// A worked example of prefabs, and the specimen `prefabs.rs` loads against a
+// hand-written flat scene that has to produce the identical world.
+//
+// It sits beside `example.ron` rather than replacing it: that file is the
+// format's specimen and an M4.1 test asserts it carries every registered
+// component, so it grows with the registry and must stay prefab-free. This one
+// is about one thing — what a template does — and is small enough to read whole.
+//
+// The four operations an instance has, one each:
+//
+//   "left"   fills the two holes the template leaves and takes everything else.
+//   (second) fills them, REPLACES the template's layer with its own body, and
+//            REMOVES sampling. Removal is explicit: leaving a component out
+//            inherits it.
+//   (third)  is an ordinary flat entity, to show that instances and flat
+//            entities are the same kind of list entry - file order is spawn
+//            order either way, and the camera points at an instance by name.
+Scene(
+    prefabs: {
+        // One entity's worth of components. `x` and `y` are deliberately
+        // absent from the transform: those are the holes, and an instance that
+        // does not fill them is refused by the component's own deserializer
+        // rather than given a default nobody chose.
+        "sprite": (
+            components: {
+                "transform": (rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "layer": (depth: 0.0),
+                "sampling": (filter: 1),
+            },
+        ),
+    },
+    entities: [
+        (
+            name: "left",
+            from: "sprite",
+            fill: { "transform": { "x": -8.0, "y": 0.5 } },
+        ),
+        (
+            from: "sprite",
+            fill: { "transform": { "x": 8.0, "y": -0.5 } },
+            // A whole body of its own: the template's `layer` is not spliced
+            // into at all, this one is taken verbatim.
+            components: { "layer": (depth: 2.0) },
+            // And no sampling, said out loud.
+            without: ["sampling"],
+        ),
+        (
+            components: {
+                "camera": (x: 0.0, y: 0.0, zoom: 1.0),
+                "follow": (smoothing: 0.5, x: 0.0, y: 0.0, lost: false),
+            },
+            refs: { "follow": { "target": "left" } },
+        ),
+    ],
+)

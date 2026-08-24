@@ -1,0 +1,25 @@
+// The keyboard for the `input` demo simulation, and the mapping the
+// replay-over-mapping proof drives.
+//
+// It exists as a committed file rather than a string in a test on purpose: the
+// proof is that a *real* mapping, loaded from disk the way a game loads one,
+// produces a recording that replays. A literal beside the assertion would be
+// testing the test.
+//
+// The three actions are the ones `sim::input` consumes - `ACTIONS` there is the
+// list a recording is checked against before a replay starts.
+//
+// `select` is `OnPress`, because choosing happens once. The two axes are
+// `OnPressAndRelease` so that letting go comes to rest, which is what makes a
+// held key a state rather than a stutter.
+Mapping(
+    bindings: [
+        (control: KeyW, action: "thrust", emit: OnPressAndRelease(press: 1, release: 0)),
+        (control: KeyS, action: "thrust", emit: OnPressAndRelease(press: -1, release: 0)),
+        (control: KeyA, action: "turn", emit: OnPressAndRelease(press: -1, release: 0)),
+        (control: KeyD, action: "turn", emit: OnPressAndRelease(press: 1, release: 0)),
+        (control: Digit1, action: "select", emit: OnPress(1)),
+        (control: Digit2, action: "select", emit: OnPress(2)),
+        (control: Digit3, action: "select", emit: OnPress(3)),
+    ],
+)

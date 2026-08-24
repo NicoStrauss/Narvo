@@ -1,0 +1,32 @@
+[package]
+name = "narvo-ipc"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The protocol's own shape - the request and response vocabulary - is derived
+# like every other format in this workspace.
+serde = { version = "1.0.229", features = ["derive"] }
+
+# The protocol's encoding, fixed by `ProjektPlan.md` §6/M6 ("IPC-Protokoll (JSON
+# über lokalen Socket)"). It is also what computes the position in a message:
+# this crate reports where a mistake is by handing back the line and column
+# `serde_json` already knows, and owns no line-counting code of its own - the
+# same arrangement `narvo-input` has with `ron`.
+#
+# It carries **no component value**. ADR-0030 records why: a component crosses
+# this boundary as the registry's own RON inside a JSON string, so `serde_json`
+# never sees a float and its three unrepresentable values never arise.
+serde_json = "1.0.151"
+
+# The engine, so the integration test can push what `ComponentRegistry`
+# serialized through this protocol and read it back into a world. A
+# **dev**-dependency and never a normal one: this crate is deliberately beside
+# `narvo-input`, `narvo-audio` and `narvo-physics2d` and below `narvo-ecs`,
+# and a production edge here would make the layering a lie (ADR-0030).
+[dev-dependencies]
+narvo-ecs.workspace = true

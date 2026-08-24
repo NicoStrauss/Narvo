@@ -1,0 +1,84 @@
+# cargo-nextest configuration - https://nexte.st
+#
+# nextest is the default test runner for this workspace. It runs every test in
+# its own process, so a panic, an abort or a hang takes down that one test
+# instead of the whole binary, and it reports failures as they happen rather
+# than only in a summary at the end.
+#
+# What it does not do is run doctests - a nextest limitation, not a decision
+# taken here. Doctests stay covered by `cargo test --doc --workspace`, which is
+# part of the verification set next to the nextest run, locally and in CI.
+
+[profile.default]
+# Stop at the first failure. On a developer machine the first failure is almost
+# always the one being worked on; finishing the run costs time and buys nothing.
+fail-fast = true
+
+# Print a failing test's output the moment it fails, so it is on screen without
+# scrolling back through the summary.
+failure-output = "immediate"
+
+# Never retry. A test that passes on the second attempt is a bug report, not a
+# success - silently retrying here would make the determinism the engine is
+# supposed to guarantee unverifiable.
+retries = 0
+
+# Report tests slower than this, and kill one that has stopped coming back.
+#
+# The reporting half is unchanged and is the reason the period stays at 30 s: a
+# slow test is worth seeing every half minute while it is happening, which is
+# finer than CI needs and exactly what a developer watching a run wants.
+#
+# `terminate-after` is new, and it closes a hole that was measured rather than
+# suspected. M6.5a's red edge (b) removed the read deadline from the agent
+# client on purpose, to see what a blocking read with no bound would do to this
+# suite: the test ran past 150 s, printed SLOW at 30, 60, 90 and 120 s, and
+# **nothing ever killed it** - because this profile had no `terminate-after` at
+# all while `ci` below has had one since it was written. The failure mode was
+# therefore silent locally and loud in CI, which is the wrong way round: the
+# developer machine is where a hang costs a session, and CI is where somebody is
+# already watching. 10 x 30 s.
+#
+# **This is a brake, not a synchronisation.** Five minutes is not tuned to any
+# test here and must never be - the whole local run takes about 13 s and the
+# longest legitimate wait in it is the 20-second `PATIENCE` brake the socket
+# tests carry, so this sits an order of magnitude above anything a slower
+# machine could need. **If a test ever dies on this bound, the answer is not a
+# bigger number** - it is that something is genuinely stuck, and
+# `ProjektPlan.md` §9.2's rule against tuning a timeout until a flake disappears
+# applies here exactly as it does to `PATIENCE`.
+#
+# Five minutes is also the wall clock `ci` already allows (5 x 60 s), so the two
+# profiles agree on when a test has stopped being slow and started being stuck.
+# They agree by arithmetic and not by inheritance: measured with an exaggerated
+# value in this key, a `terminate-after` here does **not** reach `[profile.ci]`,
+# whose own `slow-timeout` table wins whole.
+slow-timeout = { period = "30s", terminate-after = 10 }
+
+[profile.ci]
+# CI reports every failure in a single run. Pushing again just to learn whether
+# the other platform is broken too costs far more than finishing this run.
+fail-fast = false
+
+# Failures inline as they happen and repeated at the end, so they are findable
+# both while streaming the log and after the run has finished.
+failure-output = "immediate-final"
+
+# Only failures reach the status stream. One green line per passing test is
+# noise in a CI log.
+status-level = "fail"
+
+retries = 0
+
+# Unlike locally, a hung test has to be killed here, or it occupies a runner
+# until the job timeout expires. Terminated after 5 x 60 s.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The renderer tests are the one place where "passed" is ambiguous: on a machine
+# with no GPU adapter they skip instead of rendering, and a skip that leaves no
+# trace in the log is indistinguishable from a verification that actually ran.
+# Showing their output even when they pass makes that difference readable, which
+# matters because CI is exactly where the adapter may be missing.
+[[profile.ci.overrides]]
+filter = 'package(narvo-render2d)'
+success-output = "immediate"

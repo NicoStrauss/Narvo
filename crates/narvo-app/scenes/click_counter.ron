@@ -1,0 +1,70 @@
+// The click-counter scene: the first content that consumes the whole M5 chain.
+//
+// A window opened on this file shows a button. Clicking it sends `buy`, and so
+// does the space bar when the run is given the mapping beside this file
+// (`click_counter.mapping.ron`). The counter is world state, so a recording of
+// either path replays into the same number.
+//
+// The two paths meet at exactly one place and neither knows about the other:
+//
+//   click  -> hit_test -> HitRect's own action  -\
+//                                                 >-- InputEvent -> Events<InputEvent>
+//   key    -> Control  -> Mapping's binding     -/
+//
+// Nothing here names a key or a mouse button. `hitrect` says what a click on a
+// thing means; the mapping file says what a key means; the simulation sees only
+// `buy` (ADR-0012, and its M5.2 amendment keeping recordings at that level).
+//
+// Region names are file stems under `assets/` beside this file, and this scene
+// ships without that directory. **The window therefore refuses to start on it
+// today**, measured rather than assumed:
+//
+//   narvo: the assets directory crates/narvo-app/scenes\assets could not be
+//   read: ... (os error 3)
+//
+// The *format* is unaffected - a scene loads with no atlas anywhere, which is
+// what `narvo-scene`'s own tests do - but the *runner* packs an atlas before it
+// opens a window (M4.8), and ADR-0024 forbids committing the PNGs that would
+// satisfy it: "No PNG is committed, here or anywhere."
+//
+// The sanctioned pattern is M4.8's own: a test writes the runnable demo's assets
+// under `target/`, as `target/m48-demo/` is written rather than checked in.
+// Building that generator for this scene is a named follow-up in the M5.5
+// report, not something to smuggle in here.
+Scene(
+    entities: [
+        // The backdrop, behind everything. No hitrect: clicking the background
+        // is not an action, and an entity without one is not a candidate.
+        (
+            name: "background",
+            components: {
+                "transform": (x: 0.0, y: 0.0, rotation: 0.0, scale_x: 256.0, scale_y: 256.0),
+                "layer": (depth: 0.0),
+                "sprite": (region: "backdrop"),
+            },
+        ),
+
+        // The button. Its rectangle is what turns a click into `buy`, and it is
+        // the same 32 by 32 the sprite covers - the rectangle does not follow
+        // `scale`, so the two agree here because the file says so, not because
+        // anything keeps them in step (ADR-0027).
+        (
+            name: "button",
+            components: {
+                "transform": (x: 0.0, y: -48.0, rotation: 0.0, scale_x: 64.0, scale_y: 64.0),
+                "layer": (depth: 1.0),
+                "sprite": (region: "button"),
+                "hitrect": (half_width: 32.0, half_height: 32.0, action: "buy", value: 1),
+            },
+        ),
+
+        // The counter. It carries no transform and draws nothing: it is the
+        // number itself, and what shows it on screen is the runner's business.
+        (
+            name: "counter",
+            components: {
+                "tally": (action: "buy", count: 0),
+            },
+        ),
+    ],
+)

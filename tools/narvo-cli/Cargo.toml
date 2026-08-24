@@ -1,0 +1,38 @@
+[package]
+name = "narvo-cli"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# `tools/` is for what ships, `xtask/` for what builds it (M2.1d). This is the
+# first thing in `tools/`, and the distinction it inherits is that a user runs
+# this and nobody runs an xtask.
+[[bin]]
+name = "narvo-cli"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The validator. Everything this binary knows about scenes it learns from here;
+# the binary's own job is arguments, a registry and a line of text per finding.
+narvo-scene.workspace = true
+
+# The registry the scenes are checked against, and the seven component types
+# that go in it.
+narvo-ecs.workspace = true
+
+# No argument-parsing dependency, and that is measured rather than assumed.
+# `clap` with `derive` brings 21 crates, 15 of them new to this workspace, and
+# takes a clean debug build from 0.29 s to 3.88 s — for one subcommand, one
+# positional argument and one flag. §8.1's budgets and `cargo deny`'s scope both
+# point the same way, so the parsing is thirty lines in `main.rs`. The M4.2
+# report carries the measurement. Revisit when this tool grows a third
+# subcommand or anything with sub-options.
+
+# No `[dev-dependencies]`: cargo hands a package's `[dependencies]` to every
+# target it builds, integration tests included, so `tests/cli.rs` already has
+# `narvo-scene` and `narvo-ecs` from above. Re-declaring either would be a
+# second version requirement for the same crate, free to drift out of step with
+# the first — the M2.1 lesson recorded in CLAUDE.md.

@@ -1,0 +1,22 @@
+# The toolchain both platforms build with.
+#
+# Pinned to an exact version rather than to a channel, and that is the whole
+# point of the file. M2 carries a pre-registered kill criterion over Windows
+# <-> Linux float determinism (ProjektPlan.md §6, M2). An experiment comparing
+# two platforms has to hold everything else still, and `stable` on two machines
+# is only the same compiler until one of them updates - at which point a
+# determinism difference could be the platform or could be the codegen, with no
+# way to tell them apart after the fact. A version number is reproducible; a
+# channel is a moving target.
+#
+# Bumping it is therefore a deliberate act, not maintenance: change it here,
+# rebuild on both platforms, and re-run the determinism suite. A compiler change
+# can move floating-point codegen, which is exactly the quantity under test.
+[toolchain]
+channel = "1.97.1"
+# `minimal` plus these two components is precisely what the verification set
+# needs - clippy and rustfmt are two of its six steps - and nothing more.
+# rustdoc, which `cargo test --doc` runs, ships as part of the compiler rather
+# than as a separate component.
+profile = "minimal"
+components = ["clippy", "rustfmt"]

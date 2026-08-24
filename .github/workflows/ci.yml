@@ -1,0 +1,414 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    # **There is deliberately no `paths-ignore` here any more.** It carried two
+    # entries until U2, `ProjektPlan.md` and `Uebergabe-Amboss.md`, and both
+    # named files that have left this repository: the plan and its archive moved
+    # to a private sibling, and neither file comes back. A filter naming a path
+    # that cannot exist ignores nothing while reading as though it did.
+    #
+    # Dropping the `Uebergabe-Amboss.md` entry is a **deliberate departure from
+    # M5.2**, which added it knowing it was inert — that file has never lived in
+    # this repository. Inert-and-anticipating became inert-and-misleading the
+    # moment the plan side became a separate repository, so it goes rather than
+    # waits.
+    #
+    # The consequence is named rather than discovered: every push to `main` now
+    # gets a run. That is the state this workflow had before M5.2, and the two
+    # paths it used to save are paths this repository no longer has.
+    #
+    # `pull_request` is untouched: the filter is per event, and a pull request is
+    # where a change is reviewed rather than where runner minutes accumulate.
+  pull_request:
+
+# One in-flight run per ref. Pushing again to the same branch or pull request
+# cancels the previous run instead of spending runner time on a revision nobody
+# is looking at anymore.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# The workflow only reads the repository. Nothing here publishes or writes.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A missing GPU adapter makes the renderer tests skip. On a developer machine
+  # that is right - not every one has a working driver, and the rest of the
+  # suite should still run. Here it is wrong: a skip looks exactly like a pass
+  # while verifying nothing. This turns it into a failure, in CI and nowhere
+  # else.
+  NARVO_REQUIRE_GPU: "1"
+  # Deliberately no RUSTFLAGS here. As an environment variable it replaces the
+  # `rustflags` from .cargo/config.toml wholesale, which would silently drop
+  # `-fuse-ld=lld` and make the Linux job link differently from a developer
+  # machine. Warnings are denied on the clippy command line instead.
+
+jobs:
+  checks:
+    name: checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    # A runaway backstop, not a performance budget. Without it GitHub's default
+    # applies, and that default is **six hours** — which is what an `apt-get`
+    # that hung for over fifty minutes before a line of Narvo code was compiled
+    # would have been charged against (M7.5d).
+    #
+    # Derived from measurement, with the rule registered before the numbers:
+    # the smallest multiple of ten minutes that is at least **twice** the
+    # measured maximum, floor twenty. Over 37 runs (M7.9/S1) this job's maximum
+    # is 1776 s = 29.6 min on ubuntu-latest (run 32290991156) against a median
+    # of 445 s, and 1117 s = 18.6 min on windows-latest against a median of
+    # 877 s. Twice 29.6 is 59.2, which rounds to 60.
+    #
+    # Twice the maximum on purpose, and the factor is what makes this safe: that
+    # maximum *already contains* a pathological apt step (1100 s of one run's
+    # lavapipe install, against a median of 5 s), so a run that is merely slow —
+    # cold cache, slow runner — cannot trip it. One value covers both matrix
+    # entries because being generous about the Windows figure costs nothing.
+    timeout-minutes: 60
+
+    strategy:
+      # Report both platforms even when one fails: a Windows-only breakage must
+      # not hide a Linux-only one.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      # Diagnostics, not a gate, and it unblocks a decision rather than serving
+      # this run: ADR-0013's revision condition wants a measurement that resolves
+      # what `enhanced-determinism` contributes, and one named form of that is a
+      # second microarchitecture. WSL and Windows share a CPU here, so the local
+      # pre-check cannot supply one; two GitHub runners might, and today nobody
+      # knows whether they do. This prints the answer into the job log.
+      #
+      # Deliberately **not** an artifact and not a file under the recorded
+      # directory: the two sides would differ by design, and since M5b.3 an
+      # unlisted file in a recording directory is a hard failure. The full
+      # measurement needs somewhere proper to put this; the log sidesteps that
+      # question instead of answering it.
+      - name: Report the CPU this runner has
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            grep -m 1 "model name" /proc/cpuinfo
+          else
+            powershell -Command "(Get-CimInstance Win32_Processor).Name"
+          fi
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # .cargo/config.toml links x86_64-unknown-linux-gnu with clang plus lld, so
+      # both have to be on PATH before the first cargo invocation. The runner
+      # image normally ships them; install only what is actually missing, and
+      # print the versions so a linker problem is visible in the log.
+      - name: Ensure clang and lld are available (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v clang >/dev/null 2>&1 || ! command -v ld.lld >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes clang lld
+          fi
+          clang --version
+          ld.lld --version
+
+      # The Linux runner has no GPU, so every renderer test skipped here until
+      # now. lavapipe is Mesa's CPU Vulkan implementation: it runs the same
+      # pipeline the hardware path does, just slowly, which is enough to make
+      # the tests verify something. Windows needs none of this - it already
+      # renders on WARP, Microsoft's equivalent, without being asked.
+      - name: Install lavapipe and point the Vulkan loader at it (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libvulkan1 mesa-vulkan-drivers vulkan-tools
+
+          # Pin the loader to lavapipe rather than letting it enumerate. The
+          # image ships ICDs for hardware that is not present, and picking the
+          # one we just installed keeps the adapter identical from run to run -
+          # which is what the golden images of M1.3 will be compared against.
+          # Match both spellings on purpose: Mesa used to ship the ICD as
+          # lvp_icd.x86_64.json and drops the architecture suffix in newer
+          # releases (25.2.8 on noble does), so anchoring on either one breaks
+          # the moment the runner image moves.
+          icd=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -n 1)
+          if [ -z "$icd" ]; then
+            echo "::error::mesa-vulkan-drivers installed but no lavapipe ICD found"
+            ls -la /usr/share/vulkan/icd.d/ || true
+            exit 1
+          fi
+
+          # VK_DRIVER_FILES is the current name and VK_ICD_FILENAMES the one
+          # older loaders read. Setting both removes a version dependency for
+          # the price of one line.
+          {
+            echo "VK_DRIVER_FILES=$icd"
+            echo "VK_ICD_FILENAMES=$icd"
+            echo "WGPU_BACKEND=vulkan"
+          } >> "$GITHUB_ENV"
+
+      # Diagnostics, not a gate: this exists so the log names the driver that
+      # was actually loaded. The test run is what fails if the driver is
+      # missing, because NARVO_REQUIRE_GPU is set.
+      - name: Report the Vulkan driver in use (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "VK_DRIVER_FILES=$VK_DRIVER_FILES"
+          echo "WGPU_BACKEND=$WGPU_BACKEND"
+          ls -la /usr/share/vulkan/icd.d/
+          vulkaninfo --summary || echo "vulkaninfo exited non-zero; the test run is the real gate"
+
+      # ALSA development headers, for the audio backend's Linux output path.
+      # `cpal` depends on the `alsa` crate unconditionally on Linux, and
+      # `alsa-sys`'s build script probes for it through pkg-config and panics
+      # with this exact package name when it is missing:
+      # `alsa-sys-0.4.0/build.rs:10-11` says "For Debian/Ubuntu users:\n#
+      # apt-get install libasound2-dev".
+      #
+      # **Today this step installs nothing that any build needs**, because no
+      # crate here depends on cpal yet (M5.6c part 1 lands the licence half; the
+      # dependency itself lands in part 2). That is the point of putting it
+      # first: the commit that adds kira should fail on its own merits, not on a
+      # missing header, and this way the runner is already prepared when it
+      # arrives.
+      #
+      # This is the only job that needs it. The headless steps below, the
+      # determinism job and both jobs in release-determinism.yml either build
+      # `--no-default-features` or build nothing but `xtask`, whose dependency
+      # list is deliberately empty.
+      - name: Ensure the ALSA development headers are available (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if ! pkg-config --exists alsa 2>/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes pkg-config libasound2-dev
+          fi
+          pkg-config --modversion alsa
+
+      # Prebuilt binary, so this costs seconds rather than a from-source build.
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Cache the cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # --locked makes cargo fail instead of quietly updating Cargo.lock, so CI
+      # builds exactly the dependency set that is committed.
+      #
+      # Only Linux passes --timings: one platform is enough to see a trend, and
+      # a single report per run keeps successive runs comparable.
+      - name: Build (with timings)
+        if: runner.os == 'Linux'
+        run: cargo build --workspace --locked --timings
+
+      - name: Build
+        if: runner.os != 'Linux'
+        run: cargo build --workspace --locked
+
+      # Uploaded straight after the build so the timings survive a later step
+      # failing. Artifacts expire; the milestone-to-milestone record lives in
+      # docs/perf/BASELINE.md, this is the per-commit detail behind it.
+      #
+      # The name carries `runner.os` like every other artifact this repository
+      # uploads. **Not because two jobs collide here** — M7.9/S1 measured that
+      # claim and it is false: the step above and this one are both
+      # `if: runner.os == 'Linux'`, and the Windows job reports `skipped` for
+      # both in all 37 sampled runs, so exactly one job has ever uploaded this.
+      # It is because a name that does not say which platform produced it is a
+      # name that has to be looked up, and because the `if:` is the only thing
+      # keeping the collision away — drop it, or add a third matrix entry, and
+      # two uploads under one name is what `upload-artifact` v4 and later
+      # refuse outright. Costs one expression; removes the question.
+      - name: Upload build timings
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cargo-timings-${{ runner.os }}-${{ github.sha }}
+          path: target/cargo-timings/
+          if-no-files-found: error
+
+      - name: Test
+        run: cargo nextest run --workspace --locked --profile ci
+
+      # nextest cannot run doctests, so they get their own step. Every fenced
+      # example in a doc comment is compiled and executed here, which is what
+      # keeps the examples honest: one that drifts away from the API it
+      # documents fails the build instead of quietly rotting into a lie. That
+      # matters more than usual in this repository, because those examples are
+      # what an agent reads first.
+      - name: Doctests
+        run: cargo test --doc --workspace --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Rustfmt
+        run: cargo fmt --all --check
+
+      # The headless configuration is the one nobody builds by accident, so it
+      # is the one that rots. These three steps are the regression guard for the
+      # feature gate: the first two prove it still compiles and passes, the
+      # third proves it is still actually headless.
+      #
+      # Separate steps on purpose. A multi-line `run` on the Windows runner only
+      # reports the last command's exit code, so chaining these would hide a
+      # failure in an earlier one.
+      - name: Headless build (no render feature)
+        run: cargo build -p narvo-app --no-default-features --locked
+
+      - name: Headless test (no render feature)
+        run: cargo nextest run -p narvo-app --no-default-features --locked --profile ci
+
+      # Compiling is not enough: a dependency added without a matching import
+      # would build fine while dragging the graphics stack back in. This checks
+      # the tree itself. Linux only - the manifest is platform-independent, and
+      # one platform is enough to catch a gate that was bypassed.
+      - name: Assert the headless tree has no device crates (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          tree=$(cargo tree -p narvo-app --no-default-features --edges normal --locked)
+          echo "$tree"
+          if echo "$tree" | grep -Eiw 'wgpu|winit|naga|raw-window-handle|image|kira|cpal'; then
+            echo "::error::the headless build pulls in device crates; a feature gate has been bypassed"
+            exit 1
+          fi
+          echo "headless tree is free of wgpu, winit, naga, raw-window-handle, image, kira and cpal"
+
+      # The agent transport is behind a feature that is off by default (D20), so
+      # neither the default build nor the headless one compiles it. Without this
+      # step the feature-on configuration would be built by nothing — the M4.8
+      # shape the three steps above exist to prevent, repeated one gate along.
+      # It found an unused item on its first run, before it was a step.
+      #
+      # A test run rather than a build: it is also where the socket tests live,
+      # because they need a binary that has a socket.
+      - name: Agent transport (ipc feature)
+        run: cargo nextest run -p narvo-app --features ipc --locked --profile ci
+
+      # The eleventh, added in V4. `cargo clippy --workspace` above unifies the
+      # features of the members it builds, so `narvo-app`'s `render` switches
+      # `narvo-audio/device` on for everybody and the configuration without it
+      # is linted by nothing. V4 measured what that hid: three variants of
+      # `Mishap` are constructed only in the device-gated `kira_sink.rs`, so
+      # `narvo-audio` without `device` had a dead_code warning while step four
+      # reported green.
+      #
+      # Scoped to the one crate a finding exists for, not to feature
+      # combinatorics. The same measurement priced the wider cut: linting the
+      # whole headless configuration is 93 packages and 34.7 s cold against this
+      # step's 1 package and 3.3 s, and once `narvo-audio` is clean it has no
+      # finding of its own left to catch.
+      - name: Clippy (narvo-audio without device)
+        run: cargo clippy -p narvo-audio --no-default-features --all-targets --locked -- -D warnings
+
+      # Everything a single machine can check about determinism already ran, in
+      # the test step: crates/narvo-app/tests/determinism.rs. What no test can
+      # check is whether the two platforms agree, because a test only ever
+      # observes the one it runs on. So each job writes its own canonical dumps
+      # and the `determinism` job below compares them.
+      #
+      # Deliberately not an expected hash checked into the repository: ADR-0008
+      # forbids it, because such a value moves on a ron or serde release while
+      # the simulation is perfectly correct. Two artifacts built from one commit
+      # and one Cargo.lock move together instead.
+      #
+      # `cargo run --package xtask` rather than the `cargo xtask` alias, because
+      # only the long form takes --locked.
+      - name: Record the determinism artifacts
+        run: cargo run --package xtask --locked -- determinism record target/determinism
+
+      - name: Upload the determinism artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: determinism-${{ runner.os }}-${{ github.sha }}
+          path: target/determinism/
+          if-no-files-found: error
+
+  # The cross-platform half of the determinism suite, and the only check in this
+  # workflow that cannot be a test: it needs results from two machines at once.
+  #
+  # This is also the first time the comparison covers hardware other than the
+  # maintainer's. The local WSL pre-check runs on the same physical CPU as the
+  # Windows build (ADR-0007), so until now "Windows equals Linux" was a statement
+  # about one machine. Here it is two runners.
+  determinism:
+    name: determinism (cross-platform)
+    needs: checks
+    runs-on: ubuntu-latest
+
+    # Same rule as `checks` above; this job's measured maximum over 37 runs is
+    # 39 s, so twice it is far below the twenty-minute floor and the floor is
+    # what applies. The floor exists so a job that normally takes seconds does
+    # not get a limit so tight that one slow artifact download trips it.
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # download-artifact fails when the artifact does not exist, and the
+      # comparison fails when a manifest is missing or the two do not list the
+      # same cases. Both matter: a comparison that quietly ran on nothing would
+      # be green, which is the failure class this project has hit three times.
+      - name: Download the Linux artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: determinism-Linux-${{ github.sha }}
+          path: determinism/linux
+
+      - name: Download the Windows artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: determinism-Windows-${{ github.sha }}
+          path: determinism/windows
+
+      - name: Compare the two platforms
+        run: cargo run --package xtask --locked -- determinism compare determinism/linux determinism/windows
+
+      # Only on failure, and only then worth the storage: with both sides kept,
+      # a divergence can be diffed locally instead of reproduced first.
+      - name: Upload both sides for diffing
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: determinism-divergence-${{ github.sha }}
+          path: determinism/
+          if-no-files-found: error
+
+  # Licenses and advisories are properties of the dependency graph, not of the
+  # host it is built on, so this runs once instead of once per matrix entry.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+
+    # Same rule; measured maximum 76 s over 37 runs, so the floor applies.
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Check advisories, bans, licenses and sources
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

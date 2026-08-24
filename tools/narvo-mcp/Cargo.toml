@@ -1,0 +1,61 @@
+[package]
+name = "narvo-mcp"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# `tools/` is for what ships, `xtask/` for what builds it (M2.1d). This is the
+# second thing in `tools/`, and it inherits the same distinction: a user — or an
+# agent's host — runs this, and nobody runs an xtask.
+[[bin]]
+name = "narvo-mcp"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The protocol and how to speak it (ADR-0033). This crate is the second consumer
+# of both halves: `Client` is how it reaches a running engine, and
+# `framing::{Lines, framed}` is how it reads and writes MCP's own stdio wire —
+# which is the same rule, quoted from the specification rather than assumed:
+# "Messages are delimited by newlines, and MUST NOT contain embedded newlines"
+# (MCP 2026-07-28, Transports/stdio).
+narvo-ipc.workspace = true
+
+# The tool list, the JSON-RPC envelope and the tool results are derived like
+# every other format in this workspace.
+serde = { version = "1.0.229", features = ["derive"] }
+
+# JSON-RPC 2.0 is MCP's message format, so this is not a choice this crate makes
+# — it is the specification's. Already in `Cargo.lock` and already in
+# `narvo-ipc`, so this edge adds no package.
+serde_json = "1.0.151"
+
+# **No MCP crate, and that was measured rather than assumed.** S1 of M6.5b priced
+# all three routes on the pinned 1.97.1 toolchain, in throwaway crates outside
+# the workspace so that `Cargo.lock` stayed untouched until the decision was made
+# (the ADR-0028 procedure):
+#
+#   * `rmcp` 3.1.2, the official Rust SDK, does carry the current revision
+#     (`ProtocolVersion::V_2026_07_28`, `rmcp-3.1.2/src/model.rs:170`) — and costs
+#     **28 packages new to this workspace**, `tokio` among them, in a workspace
+#     with no async code at all. A clean debug build goes from 0.60 s to 12.34 s.
+#   * `rust-mcp-schema` 0.10.3 costs **one** package — and its newest generated
+#     schema is `2025-06-18`
+#     (`rust-mcp-schema-0.10.3/src/generated_schema/2025_06_18/mcp_schema.rs:16`),
+#     two revisions behind and on the *legacy* side of the era boundary the
+#     2026-07-28 revision draws. It cannot express the protocol this server
+#     speaks.
+#   * Neither is needed for the surface a tools-only stdio server has, which is
+#     three methods and six error codes — see `src/server.rs`.
+#
+# The precedent is `narvo-cli`, which declined `clap` at 21 crates and 3.88 s
+# for a smaller job and put the measurement in its own manifest. ADR-0034 records
+# this decision, what it costs, and the version it is pinned to.
+
+# No `[dev-dependencies]`: cargo hands a package's `[dependencies]` to every
+# target it builds, integration tests included, so `tests/agent_over_mcp.rs`
+# already has `narvo-ipc`, `serde` and `serde_json` from above. Re-declaring one
+# would be a second version requirement for the same crate, free to drift out of
+# step with the first — the M2.1 lesson recorded in CLAUDE.md.

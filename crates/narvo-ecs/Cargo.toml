@@ -1,0 +1,31 @@
+[package]
+name = "narvo-ecs"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Storage and query engine behind the facade (ADR-0002, ADR-0005). No optional
+# features are enabled on purpose: `macros` would put a derive macro into caller
+# code, and `row-serialize`/`column-serialize` are hecs' own world serialization,
+# which the component registry in this crate replaces with a form the engine
+# controls. Only the default `std` feature is used.
+hecs = "0.11.1"
+
+# The registry stores a type-erased path that serializes one component of one
+# entity; `serde` is the trait side of that and is required by every component
+# type registered.
+serde = { version = "1.0.229", features = ["derive"] }
+# ... and RON is the format side. CLAUDE.md already fixes RON as the engine's
+# text format for content, so the canonical state hash of M2.2 ends up hashing
+# the same representation the repository stores.
+ron = "0.12.2"
+
+# Deliberately no `[dev-dependencies]`: cargo hands a package's `[dependencies]`
+# to every target it builds, tests and benches included, so the determinism test
+# under `tests/` already has `serde` with its derives from above. Re-declaring it
+# here would be a second version requirement for the same crate, free to drift
+# out of step with the first one.

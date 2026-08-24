@@ -1,0 +1,38 @@
+# A change to this file triggers `.github/workflows/release-determinism.yml`.
+# It sets `rustflags` and the linker, so it moves codegen in the same class as a
+# compiler bump — and the release profile is the one the game ships in, which
+# nothing else watches. Decided as D9 (`ProjektPlan.md` §11), recorded in
+# ADR-0013.
+
+# Task runner.
+#
+# `cargo xtask ci` runs the whole verification set from CLAUDE.md in one command.
+# The alias is what makes `xtask` look like a cargo subcommand; the trailing `--`
+# hands everything after it to the binary rather than to `cargo run`.
+[alias]
+xtask = "run --package xtask --"
+
+# Linker configuration.
+#
+# Linking dominates the edit-build-run loop of a game engine: a one-line change
+# still relinks the whole executable. Both supported development hosts therefore
+# use LLD instead of the platform default linker.
+
+# Windows: `rust-lld.exe` ships with the Rust toolchain itself, so this needs no
+# extra installation. It replaces MSVC's `link.exe`; the MSVC toolchain is still
+# required for the C runtime and the Windows SDK import libraries.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+# Linux: LLD is invoked through the C compiler driver, which keeps doing the
+# platform-specific parts of the link. Needs `clang` and `lld` installed
+# (e.g. `apt install clang lld` or `dnf install clang lld`).
+#
+# Alternative: mold is usually faster still. If it is installed, replace the
+# `-fuse-ld` argument below with mold — keep `linker = "clang"`:
+#     rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# Older clang/gcc versions do not resolve the name and need the path instead:
+#     rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold"]
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

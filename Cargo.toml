@@ -1,0 +1,111 @@
+[workspace]
+# Resolver 3 is the MSRV-aware resolver and the default for edition 2024.
+resolver = "3"
+members = [
+    "crates/narvo-core",
+    "crates/narvo-ecs",
+    "crates/narvo-render2d",
+    "crates/narvo-testkit",
+    "crates/narvo-scene",
+    "crates/narvo-assets",
+    "crates/narvo-input",
+    "crates/narvo-audio",
+    "crates/narvo-physics2d",
+    "crates/narvo-ipc",
+    "crates/narvo-view2d",
+    "crates/narvo-app",
+    # Deliverable tooling rather than engine crates (M2.1d): `tools/` is what a
+    # user runs, `xtask/` is what builds the engine.
+    "tools/narvo-cli",
+    "tools/narvo-mcp",
+    # Build infrastructure rather than engine code, hence no `crates/` and no
+    # `narvo-` prefix. It is a workspace member so that its drift-guard tests
+    # run in the ordinary `cargo nextest run --workspace`.
+    "xtask",
+]
+
+# **`games/` is gone, and its absence is the statement.** M7's game lived here as
+# a workspace member until U2; it now sits outside this repository as a
+# standalone crate with a path dependency on these crates. This repository is the
+# engine, and a consumer of the engine is not part of it — which is the property
+# the M6b.0 probe and the M7.1 census were both measuring, now made structural.
+#
+# Removing the member fired `release-determinism.yml`, over this file and over
+# `Cargo.lock`. Both are correct and both were expected: this line changes the
+# workspace, and the lock is what every `--locked` step builds from.
+
+# Inherited by every crate via `field.workspace = true`, so version and edition
+# are declared exactly once.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Not a formality here, and load-bearing twice over. It keeps a stray
+# `cargo publish` from pushing the source to crates.io, which would be as
+# irrevocable as making the repository public; and it is the exact condition
+# `[licenses.private]` in `deny.toml` keys off, so the licence check knows which
+# crates are ours. Every member inherits it, `narvo-testkit` states it
+# directly, and a test in `xtask` holds all of that in place.
+publish = false
+# There is deliberately no `license` key, and its absence is the statement: all
+# rights reserved, no licence chosen yet, none granted. `LICENSE` at the
+# repository root says it in prose; a field here would say the opposite in a
+# form that tooling reads and copies into published metadata.
+#
+# It was `MIT OR Apache-2.0` from M0 until 14.08.2026. The direction D5 records
+# for this project's licensing (`ProjektPlan.md` §11, reopened 11.08.2026) is
+# incompatible with that grant, and a grant survives being withdrawn for every
+# copy already published under it.
+
+# Internal crates are routed through the workspace so a path is written once and
+# a crate only has to name the dependency. The version requirement is redundant
+# for a path dependency, but without it the requirement is `*` and cargo-deny's
+# wildcard ban rejects it.
+[workspace.dependencies]
+narvo-core = { path = "crates/narvo-core", version = "0.1.0" }
+narvo-ecs = { path = "crates/narvo-ecs", version = "0.1.0" }
+narvo-render2d = { path = "crates/narvo-render2d", version = "0.1.0" }
+narvo-testkit = { path = "crates/narvo-testkit", version = "0.1.0" }
+narvo-scene = { path = "crates/narvo-scene", version = "0.1.0" }
+narvo-assets = { path = "crates/narvo-assets", version = "0.1.0" }
+narvo-input = { path = "crates/narvo-input", version = "0.1.0" }
+narvo-physics2d = { path = "crates/narvo-physics2d", version = "0.1.0" }
+narvo-ipc = { path = "crates/narvo-ipc", version = "0.1.0" }
+# The seam between a world and the renderer (ADR-0041). It sees both sides, so
+# it carries `narvo-render2d` and therefore the whole graphics stack; every
+# consumer of it takes that with it, which is why `narvo-app` routes it as an
+# optional dependency behind `render` rather than as a normal one.
+narvo-view2d = { path = "crates/narvo-view2d", version = "0.1.0" }
+# `default-features = false` here rather than at the consumer, because cargo
+# refuses the other way round: a member inheriting a workspace dependency cannot
+# override its `default-features`, and says so — "`default-features = false`
+# cannot override workspace's `default-features`". So the routed form is the
+# cue vocabulary alone, and a crate that wants the audio device asks for
+# `narvo-audio/device` from one of its own features. `narvo-app`'s `render`
+# does exactly that.
+#
+# This does **not** weaken the licence check. `narvo-audio` is a workspace
+# member and its own `default = ["device"]` still applies to it as a package, so
+# `cargo deny check` resolves kira, cpal and triple_buffer whatever its
+# consumers ask for — which is the property M5.6b's false green turned on.
+narvo-audio = { path = "crates/narvo-audio", version = "0.1.0", default-features = false }
+
+# Lint policy lives here and is pulled into each crate with `[lints] workspace = true`,
+# which makes `cargo clippy --workspace --all-targets -- -D warnings` the single gate.
+# Group lints need a negative priority so individual lints can still override them.
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Debug builds: workspace crates stay at opt-level 1 so they stay debuggable and
+# cheap to rebuild, while dependencies are fully optimised because they are
+# compiled once but executed every frame.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,229 @@
+name: release determinism
+
+# The determinism suite and the whole of `ci.yml` run in the `dev` profile. The
+# shipped game runs in `release`, and M2.4b measured that case once, by hand:
+# every pairing identical. Once is not a guard.
+#
+# This workflow is the guard, and it deliberately does not run on every push.
+# ADR-0013 records why: what it checks does not change with engine code, it
+# changes with the things below. Binding it to those means it fires when it has
+# something to say, and stays out of the way otherwise.
+#
+#   rust-toolchain.toml  - a compiler bump can move floating-point codegen.
+#   Cargo.toml           - `[profile.release]` with LTO or another opt-level
+#                          moves the answer exactly as a compiler bump does.
+#                          Only the workspace root matters: cargo warns
+#                          "profiles for the non root package will be ignored,
+#                          specify profiles at the workspace root", so a member
+#                          manifest cannot change a profile.
+#   .cargo/config.toml   - sets `rustflags` and the linker, so it moves codegen
+#                          in the same class as a compiler bump (D9, added in
+#                          M2.8). It is what puts `-C link-arg=-fuse-ld=lld` on
+#                          the Linux build today, and a `-C target-cpu` or a
+#                          different linker would be added in the same file.
+#   crates/*/Cargo.toml  - a member manifest cannot change a profile, as the
+#                          entry above says. It is where a *dependency* lands,
+#                          and a dependency reaches the shipped binary all the
+#                          same. Measured rather than argued: e09c5f1 added
+#                          rapier through exactly such a line, moved Cargo.lock
+#                          with it and no root manifest, and this workflow did
+#                          not fire (D18, added in V5).
+#   Cargo.lock           - every cargo step in CI is `--locked`, so the lock is
+#                          what the release binaries are built from. A bare
+#                          `cargo update` moves that tree without touching any
+#                          manifest, and before V5 no trigger caught it at all
+#                          (D18).
+#
+# The path filter on `Cargo.toml` is coarser than the decision, which names the
+# `[profile.*]` sections. Firing on the whole file is deliberate: narrowing it
+# would mean parsing TOML in a shell step, and over-firing costs a few minutes
+# of runner time while under-firing costs a missed regression in the profile the
+# game actually ships in. The asymmetry decides it.
+#
+# Two things the widened filter still does not reach. The first is a boundary,
+# the second is a gap, and both are here so that a later reader finds them
+# without the V5 report:
+#
+#   The pattern is `crates/*/Cargo.toml` and not `**/Cargo.toml`. A `*` does not
+#   cross a `/`, so it reaches the twelve engine crates one level down and no
+#   member manifest outside `crates/` - the two under `tools/`, and xtask. M7's
+#   game becomes a workspace member outside `crates/` as well, and a game
+#   manifest says nothing about whether the engine computes the same thing in
+#   two profiles. That such a manifest does not fire this workflow is the
+#   intent, not an oversight.
+#
+#   `Cargo.lock` records no feature selection. Its keys are `version`, `name`,
+#   `source`, `checksum` and `dependencies`; the word "features" occurs in it
+#   three times and every one of them is inside the crate name
+#   `document-features`, never as a key. So a manifest edit that only adds
+#   `features = [...]` or sets `default-features = false` changes the code that
+#   gets built and moves no lock. Under `crates/` the manifest pattern catches
+#   that anyway; in a manifest outside `crates/`, nothing does.
+#
+# The workflow file itself is in the filter so that a change to this job is
+# validated by running it.
+#
+# There is no schedule. A job nobody looks at is the failure class this project
+# has hit three times, and a nightly run is that failure class with a timer.
+
+on:
+  push:
+    # The list below is read by a drift guard in xtask,
+    # `claude_md_names_every_answer_changing_trigger`, which collects entries
+    # from the line after `paths:` and stops at the first line that is not one.
+    # A comment placed *between* two entries would therefore truncate what the
+    # guard checks while leaving it green - the failure class this project
+    # keeps meeting. Keep the entries contiguous; prose goes above `on:`.
+    paths:
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - ".cargo/config.toml"
+      - ".github/workflows/release-determinism.yml"
+      - "crates/*/Cargo.toml"
+      - "Cargo.lock"
+  # Runnable by hand, from any branch, without touching a file. Without this a
+  # failure could not be re-run and nobody could look at the answer when they
+  # wanted to - which would make "less often" quietly mean "switched off".
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  record:
+    name: record (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    # The same runaway backstop `ci.yml`'s jobs carry, by the same rule: the
+    # smallest multiple of ten minutes that is at least twice the measured
+    # maximum, floor twenty. This workflow runs rarely, so the sample is three
+    # runs rather than 37 — maxima 210 s on windows-latest and 102 s on
+    # ubuntu-latest (M7.9/S1) — and twice either is well under the floor.
+    #
+    # The thin sample is the reason to keep the floor rather than trim to it: a
+    # release build is the slowest thing this repository does, and three runs
+    # are not enough to know its tail.
+    timeout-minutes: 20
+
+    strategy:
+      # Report both platforms even when one fails, as `ci.yml` does: a
+      # Windows-only breakage must not hide a Linux-only one.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # .cargo/config.toml links Linux with clang plus lld, so both have to be
+      # on PATH before the first cargo invocation.
+      - name: Ensure clang and lld are available (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v clang >/dev/null 2>&1 || ! command -v ld.lld >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes clang lld
+          fi
+
+      - name: Cache the cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Headless on purpose: the determinism matrix never touches the GPU, and
+      # this builds five units per profile instead of the whole graphics tree.
+      # That the feature set does not change the result is not assumed - a
+      # headless and a default-features release build were compared locally and
+      # produced byte-identical matrices, all 19 files.
+      #
+      # Both profiles from one checkout, so the optimisation level is the only
+      # variable between them.
+      - name: Build the headless binaries, dev profile
+        run: cargo build -p narvo-app -p xtask --no-default-features --locked
+
+      - name: Build the headless binaries, release profile
+        run: cargo build -p narvo-app -p xtask --no-default-features --locked --release
+
+      # `record` finds `narvo` next to the xtask binary that is running, so the
+      # dev xtask records the dev binary and the release xtask the release one.
+      - name: Record the dev matrix
+        run: cargo run -p xtask --locked -- determinism record artifacts/dev
+
+      - name: Record the release matrix
+        run: cargo run -p xtask --locked --release -- determinism record artifacts/release
+
+      - name: Record the release matrix a second time
+        run: cargo run -p xtask --locked --release -- determinism record artifacts/release-again
+
+      # Is release reproducible in itself? Two recordings from one binary on one
+      # machine. If this fails, nothing below it means anything.
+      - name: Compare release against itself
+        run: cargo run -p xtask --locked --release -- determinism compare artifacts/release artifacts/release-again
+
+      # The comparison this workflow exists for. Both matrices come from one
+      # checkout and one Cargo.lock, so the optimisation level is the only thing
+      # that differs - and a `[profile.release]` that changes the answer shows up
+      # here even when it changes it identically on both platforms, which the
+      # cross-platform job below would not catch.
+      - name: Compare dev against release
+        run: cargo run -p xtask --locked --release -- determinism compare artifacts/dev artifacts/release
+
+      - name: Upload the release matrix
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-determinism-${{ runner.os }}-${{ github.sha }}
+          path: artifacts/release/
+          if-no-files-found: error
+
+  compare:
+    name: compare (cross-platform, release)
+    needs: record
+    runs-on: ubuntu-latest
+
+    # Same rule; measured maximum 37 s over three runs, so the floor applies.
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # download-artifact fails when the artifact does not exist, and the
+      # comparison fails when a manifest is missing or the two do not list the
+      # same cases. A comparison that quietly ran on nothing would be green.
+      - name: Download the Linux release matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: release-determinism-Linux-${{ github.sha }}
+          path: determinism/linux
+
+      - name: Download the Windows release matrix
+        uses: actions/download-artifact@v7
+        with:
+          name: release-determinism-Windows-${{ github.sha }}
+          path: determinism/windows
+
+      - name: Compare the two platforms in the release profile
+        run: cargo run -p xtask --locked -- determinism compare determinism/linux determinism/windows
+
+      - name: Upload both sides for diffing
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-determinism-divergence-${{ github.sha }}
+          path: determinism/
+          if-no-files-found: error

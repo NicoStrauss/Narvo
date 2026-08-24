@@ -1,0 +1,12 @@
+[package]
+name = "narvo-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Intentionally empty: the foundation crate stays dependency-free for as long as
+# possible so it can be compiled and tested anywhere.
+[dependencies]

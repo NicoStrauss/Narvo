@@ -1,0 +1,38 @@
+All rights reserved.
+
+Copyright (c) 2026 Narvo contributors.
+
+No licence has been chosen for this project. Until one is, no permission of any
+kind is granted to anyone else: use, copying, modification, distribution and
+the preparation of derivative works — of this software, its source, or any part
+of either — are not permitted.
+
+This file is not a licence and does not become one by sitting where a licence
+usually sits. It says that there is none.
+
+## Why the dual licence is gone
+
+From M0 until 14.08.2026 this repository declared `MIT OR Apache-2.0`, in two
+files here and in the `license` field of every manifest. Both of those grants
+are irrevocable for any copy published under them, and the direction this
+project has since been given for its licensing is incompatible with them (D5,
+reopened 11.08.2026). **The old grant was removed while the source was still
+unpublished, and that timing is the whole of why it could be removed at all** —
+a grant cannot be withdrawn from a copy somebody already holds under it.
+
+Publication changes nothing about this. What is published is what this file
+says: source that is readable, and no permission to use, copy, modify or
+distribute it. The point of the removal was never that nobody could see the
+code; it was that nobody had been given terms.
+
+Removing the old licence is deliberately **not** a choice of a new one. What
+Narvo will be licensed under is open, it is a human's decision, and D5 records
+that it is taken with legal advice before any release. Nothing here anticipates
+it.
+
+## What this file does not cover
+
+Third-party material keeps its own terms, which are its authors' to give and
+not ours to withdraw. That includes every dependency in `Cargo.lock` and the
+DejaVu Sans Mono font under `crates/narvo-testkit/assets/`, whose own licence
+sits beside it because its terms require it to travel with the font.

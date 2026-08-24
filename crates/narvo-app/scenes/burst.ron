@@ -1,0 +1,78 @@
+// The burst scene: two emitters, and what a world stores when it stores
+// particles.
+//
+// This is D22's answer as content (ADR-0044). A burst of forty-eight sparks is
+// six numbers in this file and six numbers in the canonical dump, and stays six
+// numbers however many sparks it throws — the world stores the emitter and the
+// particles are a function of it.
+//
+// Run it headless and watch the age move, which is the whole of what a burst
+// does to the world:
+//
+//   narvo --mode scene-file --scene crates/narvo-app/scenes/burst.ron \
+//          --ticks 5 --dump
+//
+//   burst (count:48,seed:7,age:5,life:40,speed:1.75,spread:1.0)
+//
+// `age` is a component field, so it is in the dump, in ADR-0008's state hash,
+// in an ADR-0043 save and readable over the agent protocol. That is what makes a
+// replay reproduce the burst rather than merely a burst.
+//
+// What the particles are is not written down anywhere, here or in the dump.
+// `Burst::particle` computes them, `narvo_view2d::regions_of` draws them, and
+// nothing between the two stores one. The price is in ADR-0044: a computed
+// particle cannot be clicked, cannot be addressed over the wire, cannot collide,
+// and cannot die on its own. A burst as a whole can do all four.
+//
+// # A window needs assets this repository does not carry
+//
+// The two region names below are file stems under `assets/` beside this file,
+// and ADR-0024 forbids committing the PNGs — "No PNG is committed, here or
+// anywhere." So this scene runs headless as it stands and a window on it
+// refuses to start, exactly as `click_counter.ron` does and for the same reason.
+// The sanctioned pattern is M4.8's: a test writes a runnable copy and its assets
+// under `target/`. `tests/burst_is_seen.rs` renders the same construction
+// offscreen instead, which is what the oracle needs and what a generator would
+// not add.
+Scene(
+    entities: [
+        // A backdrop, so the bursts have something to be drawn in front of and
+        // the depth order is exercised by content rather than only by a test.
+        (
+            name: "backdrop",
+            components: {
+                "transform": (x: 0.0, y: 0.0, rotation: 0.0, scale_x: 256.0, scale_y: 256.0),
+                "layer": (depth: 0.0),
+                "sprite": (region: "backdrop"),
+            },
+        ),
+
+        // The long burst: many particles, slow, wide. `spread: 1.0` is the full
+        // diamond, so the sparks leave in every direction the scatter has.
+        (
+            name: "wide",
+            components: {
+                "transform": (x: -40.0, y: 0.0, rotation: 0.0, scale_x: 6.0, scale_y: 6.0),
+                "layer": (depth: 1.0),
+                "sprite": (region: "spark"),
+                "tint": (red: 1.0, green: 0.75, blue: 0.25, alpha: 1.0),
+                "burst": (count: 48, seed: 7, age: 0, life: 40, speed: 1.75, spread: 1.0),
+            },
+        ),
+
+        // The short burst: fewer particles, faster, narrower, and a different
+        // seed — so the two are visibly two bursts and not one drawn twice.
+        // It ends at tick 12 while the other is still running, which is what
+        // puts a spent burst and a live one in the same frame.
+        (
+            name: "quick",
+            components: {
+                "transform": (x: 40.0, y: 0.0, rotation: 0.0, scale_x: 6.0, scale_y: 6.0),
+                "layer": (depth: 1.0),
+                "sprite": (region: "spark"),
+                "tint": (red: 0.4, green: 0.8, blue: 1.0, alpha: 1.0),
+                "burst": (count: 16, seed: 8, age: 0, life: 12, speed: 3.5, spread: 0.5),
+            },
+        ),
+    ],
+)

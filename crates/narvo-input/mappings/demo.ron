@@ -1,0 +1,38 @@
+// The mapping the `input` demo simulation would be driven by, as a file.
+//
+// It is here so that the end-to-end test loads a mapping the way a game will -
+// from disk, as committed text - rather than from a string literal beside the
+// assertion. `ProjektPlan.md` §4 keeps content in the repository as text; this
+// is the first content this crate has.
+//
+// The three actions are the ones `narvo-app`'s `input` mode already consumes:
+// `thrust` and `turn` are held, so they come to rest when the key comes up, and
+// `select` happens once per press.
+Mapping(
+    bindings: [
+        // Thrust forwards and back. The rest value is written out rather than
+        // implied: releasing the key is what stops the mover, and a binding
+        // that did not say so would leave it drifting.
+        (control: KeyW, action: "thrust", emit: OnPressAndRelease(press: 1, release: 0)),
+        (control: KeyS, action: "thrust", emit: OnPressAndRelease(press: -1, release: 0)),
+
+        // The same two, on the arrows. Two controls may send one action; what
+        // may not happen is one control sending two.
+        (control: ArrowUp, action: "thrust", emit: OnPressAndRelease(press: 1, release: 0)),
+        (control: ArrowDown, action: "thrust", emit: OnPressAndRelease(press: -1, release: 0)),
+
+        // Turning, the same shape.
+        (control: KeyA, action: "turn", emit: OnPressAndRelease(press: -1, release: 0)),
+        (control: KeyD, action: "turn", emit: OnPressAndRelease(press: 1, release: 0)),
+        (control: ArrowLeft, action: "turn", emit: OnPressAndRelease(press: -1, release: 0)),
+        (control: ArrowRight, action: "turn", emit: OnPressAndRelease(press: 1, release: 0)),
+
+        // A discrete choice: which mover the console is talking to. Nothing is
+        // sent when the key comes up, because choosing is something that
+        // happens rather than something that is held.
+        (control: Digit0, action: "select", emit: OnPress(0)),
+        (control: Digit1, action: "select", emit: OnPress(1)),
+        (control: Digit2, action: "select", emit: OnPress(2)),
+        (control: Digit3, action: "select", emit: OnPress(3)),
+    ],
+)

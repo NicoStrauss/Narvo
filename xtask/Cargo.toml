@@ -1,0 +1,19 @@
+[package]
+# No `narvo-` prefix, and that is the signal: this is build infrastructure, not
+# part of the engine. Nothing in `crates/` may ever depend on it.
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+# Resolves to `publish = false` from the workspace. A task runner has no business
+# on a registry.
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# Deliberately empty, and this is a rule rather than a preference. A task runner
+# that pulls in an argument parser and an error library puts crates into
+# `cargo deny`'s scope and into every rebuild, in exchange for saving a `match`
+# on `args` and a handful of `eprintln!`s. `std::process::Command` and
+# `std::env` are the whole job.
+[dependencies]

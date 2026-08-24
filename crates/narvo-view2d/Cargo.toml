@@ -1,0 +1,65 @@
+[package]
+name = "narvo-view2d"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# **No features, and that is deliberate.** Everything this crate names from
+# `narvo-render2d` — `SpritePlacement`, `SpriteFilter`, `CameraView` — sits
+# behind that crate's `gpu` feature, which is on by default. A gate here would
+# therefore have to mirror `gpu` exactly, and nothing in this workspace would
+# ever switch it off: `narvo-app` is the only consumer and it takes this crate
+# only when `render` is on. A feature nobody sets is a second configuration
+# nothing builds, which is the M5.6b shape — an option absent from every graph
+# that checks it.
+#
+# The consequence is named rather than hidden: **this crate always carries the
+# graphics stack**, so a consumer that wants only `hit_test` pays for wgpu too.
+# ADR-0041 records that as the price of keeping `depth_order` in one copy, and
+# names the condition under which the trade is taken again.
+
+[dependencies]
+# The world side of the seam. Everything this crate reads is a component.
+narvo-ecs = { workspace = true }
+
+# The renderer side. This crate produces the renderer's own scalars and never a
+# `wgpu` type — ADR-0015's arrangement, unchanged by the move: the two crates
+# still meet at `SpritePlacement`, and `narvo-render2d` still does not know
+# that an ECS exists.
+narvo-render2d = { workspace = true }
+
+# The file side, arriving in M6b.2a with the atlas path. `load_for` reads a
+# directory through `regions_from_directory` and packs it through `pack`, so
+# this crate is now the third that sees a `World` and a renderer at once — which
+# is the whole point of moving it here, since `narvo-app` is a binary and its
+# `AssetsError::UnknownRegion` could not be reached from outside.
+#
+# **The edge costs exactly one package**, measured before it was added: of the
+# eleven in `narvo-assets`' normal tree, ten are already under this crate —
+# `narvo-render2d` carries `image`, which pulls `png` and its deflate stack. So
+# `cargo tree -p narvo-view2d --edges normal` goes from 98 packages to 99, and
+# the one is `narvo-assets` itself.
+#
+# It brings no name from `FORBIDDEN_IN_HEADLESS`, measured against all seven, and
+# it cannot reach the headless tree in any case: `narvo-app` takes this crate
+# only behind `render`, and it already depends on `narvo-assets` directly.
+narvo-assets = { workspace = true }
+
+# The PNG **encoder**, so the four tests that came with `load_for` can write the
+# files they then load — ADR-0024's rule that nothing binary is committed.
+#
+# **A dev-dependency and never a normal one**, the same arrangement and the same
+# reason as `narvo-app`'s: this crate decodes nothing itself, `narvo-assets`
+# does, and the normal graph has no business carrying an encoder.
+#
+# It adds **no package** — png 0.18.1 is already in `Cargo.lock` and already
+# under this crate through `image` — but it is a new edge in this manifest, and
+# M6b.2a's prediction V5 expected the lock to move by one line rather than two.
+# The second line is this. See `target/reports/M6b.2a.md`; the alternative was
+# to leave the four tests behind in `narvo-app`, which would have left this
+# crate's own public surface uncovered by `cargo nextest run -p narvo-view2d`.
+[dev-dependencies]
+png = { version = "0.18.1", default-features = false }

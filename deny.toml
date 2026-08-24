@@ -1,0 +1,148 @@
+# cargo-deny configuration — run with `cargo deny check`.
+#
+# Two things are gated here: the licenses of everything that gets linked into
+# Narvo, and known security advisories for the dependency tree.
+
+[graph]
+# Only the hosts we build for. Keeps the graph small and avoids failing on
+# platform-specific crates we never compile.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+[advisories]
+# Warn about crates whose maintainers gave them up; fail on published
+# vulnerabilities and on releases that were pulled from crates.io.
+unmaintained = "workspace"
+yanked = "deny"
+# Advisories that were reviewed and consciously accepted go here, each with a
+# comment saying why and when to revisit.
+ignore = []
+
+[licenses]
+# The policy in three lines, because "permissive only" was too coarse a raster
+# and said so by failing on a crate this project decided to keep:
+#
+#   * permissive is the default, and the `allow` list below is the whole of it;
+#   * strong copyleft (GPL, AGPL, LGPL) stays forbidden, with no mechanism here
+#     to admit it — linking one into a shipped binary is the thing this file
+#     exists to prevent;
+#   * file-level copyleft is admitted only as a named single-crate exception
+#     with its reasoning beside it, never as a licence added to `allow`.
+#
+# The difference between the second and third bullets is the whole point. A
+# blanket "MPL-2.0" in `allow` would wave through every future copyleft crate
+# that happens to carry that identifier; an entry in `exceptions` binds the
+# permission to one crate and leaves the next one to trip the check exactly as
+# before.
+#
+# All of it is about *foreign* crates. Our own carry no licence at all since
+# 14.08.2026, and `[licenses.private]` at the bottom of this section is where
+# that is handled; nothing in the three bullets above changed with it.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unicode-3.0",
+    # Superseded by Unicode-3.0 but still declared by older releases of
+    # unicode-ident and friends.
+    "Unicode-DFS-2016",
+    # Common in the Rust ecosystem (wasi, some llvm-adjacent crates): plain
+    # Apache-2.0 with an extra linking permission, so strictly more permissive
+    # than Apache-2.0 above.
+    "Apache-2.0 WITH LLVM-exception",
+]
+
+# The one named exception, and the only one. cargo-deny's own generated template
+# describes what this table does: "Allow 1 or more licenses on a per-crate basis,
+# so that particular licenses aren't accepted for every possible crate as with
+# the normal allow list." That per-crate binding is why this is an exception
+# rather than an `allow` entry.
+#
+# `triple_buffer` is `MPL-2.0` (`triple_buffer-9.0.0/Cargo.toml:40`) and reaches
+# this workspace as an unconditional dependency of `kira`
+# (`kira-0.12.3/Cargo.toml:176-177` — one declaration, no `optional`, no target,
+# no feature), so no kira feature configuration avoids it. M5.6b halted on
+# exactly this and built nothing; the decision to keep kira and admit the crate
+# was the maintainer's, on 11.08.2026, and its reasoning is the licence class:
+# MPL-2.0 is file-level copyleft and permits static linking into a larger
+# proprietary work, which is the shape this project ships. ADR-0028's amendment
+# carries the full finding and `ProjektPlan.md` §12 the booking.
+#
+# Not legal advice, and the plan does not pretend otherwise: D5 carries a
+# standing item that a lawyer reviews this exception before any release, and
+# that every release ships a third-party notices file in which the MPL notice
+# for this crate appears.
+#
+# The exit, recorded so nobody has to rediscover it, and quoted rather than
+# remembered — `triple_buffer-9.0.0/README.md:272-274`: "More relaxed licensing
+# (Apache, MIT, BSD...) may also be negociated, in exchange of a financial
+# contribution." Buying that removes this entry rather than growing it.
+#
+# Until a tree actually contains the crate, this entry is inert and cargo-deny
+# says so: `warning[license-exception-not-encountered] ... unmatched license
+# exception`. A warning, not a failure — measured, because an exception that
+# turned the check red on the commit that introduces it would be worse than no
+# exception at all.
+exceptions = [{ allow = ["MPL-2.0"], crate = "triple_buffer" }]
+
+# Our own crates declare no licence at all, so this check has to be told what to
+# do about them. The comment that stood here until 14.08.2026 said the opposite
+# — "no `private` exemption: the workspace crates declare `MIT OR Apache-2.0`"
+# — and was true of a tree that no longer exists.
+#
+# The measurement, before the decision. With the `license` field removed from
+# the workspace and from all fourteen members and nothing else changed,
+# `cargo deny check licenses` reported exactly fourteen `error[unlicensed]`
+# lines: `narvo-app`, `-assets`, `-audio`, `-cli`, `-core`, `-ecs`, `-input`,
+# `-ipc`, `-mcp`, `-physics2d`, `-render2d`, `-scene`, `-testkit` and `xtask`,
+# and no foreign crate. M5b.1 hit the same wall from the other side, where a
+# throwaway probe crate failed on its own missing licence rather than on
+# anything it depended on.
+#
+# `ignore = true` exempts them, and what it means is narrow. cargo-deny's own
+# generated template (0.20.2) describes the key as "ignores workspace crates
+# that aren't published, or are only published to private registries", so the
+# exemption is not "trust our code" but "these are not going to a registry" —
+# it reads the `publish` field and nothing else. `[workspace.package]` in the
+# root manifest sets `publish = false` for all fourteen, `narvo-testkit` states
+# it directly as well, and a test in `xtask` fails if any of that is undone.
+#
+# That coupling is the whole justification, and it points the right way: the day
+# a crate here becomes publishable, this exemption stops covering it on its own,
+# without anyone remembering to revisit this file.
+#
+# Rejected, and it was the close one: declare `license = "LicenseRef-…"` on the
+# workspace — a syntactically valid SPDX expression naming no licence — and add
+# it to `allow` above. It would keep the licence check switched on for our own
+# crates instead of switching it off, and it would put the reservation into the
+# metadata where tooling reads it. Both are real advantages. It loses on what it
+# leaves behind: a `license` key in the manifest, which is the exact artefact
+# this change exists to remove, so the next reader finds a field that looks like
+# a licence and needs prose to learn that it is not one. And it would need an
+# entry in `allow` — the list whose own comment reserves it for licences that
+# genuinely permit something. A grant recorded in the permission list, granting
+# nothing, is worse documentation than no grant at all.
+#
+# Two weaker ones: fourteen `exceptions` entries, which cannot express this at
+# all because that table maps a crate to a licence it may use and there is no
+# licence here to name; and leaving the fields in place while changing only the
+# prose, which is the half that machines do not read.
+[licenses.private]
+ignore = true
+
+[bans]
+# Several versions of the same crate bloat build time and binary size; worth a
+# warning, not worth blocking a build over.
+multiple-versions = "warn"
+# A wildcard version requirement makes builds non-reproducible.
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,26 @@
+[package]
+name = "narvo-input"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The mapping file's format (ADR-0025), and the same `ron` every other text
+# format in this workspace is written in. It is also what computes the position
+# in a message: this crate reports where a mistake is by handing back the span
+# `ron` already knows, and owns no line-counting code of its own.
+ron = "0.12.2"
+
+# The mapping file's shape - the binding list, the control names, the emit
+# policy - is deserialized with derived impls like anything else.
+serde = { version = "1.0.229", features = ["derive"] }
+
+# The engine's event buffer, so the end-to-end test can push what `map` produced
+# through the pipeline a simulation actually reads it from. A **dev**-dependency
+# and never a normal one: this crate is deliberately below `narvo-ecs` and not
+# beside it, and a production edge here would make the layering a lie (ADR-0025).
+[dev-dependencies]
+narvo-ecs.workspace = true

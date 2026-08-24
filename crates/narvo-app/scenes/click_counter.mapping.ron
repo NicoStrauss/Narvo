@@ -1,0 +1,16 @@
+// The keyboard for `click_counter.ron`.
+//
+// One binding, and it sends the same action the button's `hitrect` sends. That
+// is the point of the pair: a click and a key reach the simulation as the same
+// `buy 1`, and nothing downstream can tell which one happened. A recording of
+// either replays into the same counter (ADR-0012's M5.2 amendment - the
+// recording is at the action level, so the device is outside the closure).
+//
+// `OnPress` and not `OnPressAndRelease`: buying is something that happens once,
+// and a release value would be an event every consumer had to know to ignore
+// (ADR-0025).
+Mapping(
+    bindings: [
+        (control: Space, action: "buy", emit: OnPress(1)),
+    ],
+)

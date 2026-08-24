@@ -1,0 +1,16 @@
+# Cross-platform determinism: Narvo verifies itself by hashing simulation state
+# and diffing golden files. Neither may depend on the machine that produced them,
+# so everything Git treats as text is stored and checked out with LF on every
+# platform - Windows included.
+* text=auto eol=lf
+
+# Asset formats. Marking them binary keeps Git from touching their bytes and
+# from trying to diff them as text.
+*.png binary
+*.wav binary
+*.ogg binary
+# Fonts joined the list with the glyph atlas (M3.34). `text=auto` already
+# detects a TTF as binary by its NUL bytes and leaves it alone - checked, the
+# blob and the file hash alike - but a 335 KiB asset that a committed SHA-256
+# anchors should not rest on a heuristic.
+*.ttf binary

@@ -1,0 +1,38 @@
+[package]
+name = "narvo-physics2d"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The physics engine, behind the facade this crate is (ADR-0002's pattern, the
+# same shape `narvo-ecs` uses for hecs). No rapier type appears in a public API
+# here; ADR-0029 records why the seam is where it is.
+#
+# **`enhanced-determinism` is mandatory, not a preference.** ADR-0013's
+# consequence made it a requirement, and it is not part of rapier's `default`
+# (`rapier2d-0.35.1/Cargo.toml:66-71`), so leaving it off is a silent opt-out
+# rather than an error. `the_manifest_still_asks_for_enhanced_determinism` in
+# `src/lib.rs` reads this file at run time and fails if the string leaves.
+#
+# What the flag actually sets, measured in M5b.1 from the pinned source rather
+# than taken from prose:
+#
+#   * `simba/libm_force` (`rapier2d-0.35.1/Cargo.toml:75`) — forces the software
+#     `libm` even where `std` is available (`simba-0.10.2/src/scalar/complex.rs:474`).
+#   * `parry2d/enhanced-determinism` (`:76`), which is itself
+#     `["simba/libm_force", "indexmap", "glamx/libm", "glamx/scalar-math"]`
+#     (`parry2d-0.30.2/Cargo.toml:77-82`) — so glam leaves its SIMD path
+#     (`glamx-0.3.0/Cargo.toml:104`) and parry's `HashMap` becomes an
+#     insertion-ordered `IndexMap` (`parry2d-0.30.2/src/utils/hashmap.rs:53-63`).
+#
+# Cost of the flag, measured in M5b.1: three crates (`indexmap`, `equivalent`,
+# `serde_core`), no resolvable build-time cost, and about 5 ms per 10 000 ticks
+# at 32 bodies. **The honest limit, also measured:** in that scene the default
+# configuration was byte-identical to this one across Windows and WSL, so the
+# probe showed the mandated configuration agrees, not that the mandate is what
+# produces the agreement. ADR-0013's amendment carries that qualification.
+rapier2d = { version = "0.35.1", features = ["enhanced-determinism"] }

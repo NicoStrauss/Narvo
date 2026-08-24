@@ -1,0 +1,20 @@
+[package]
+name = "narvo-testkit"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+narvo-render2d = { workspace = true }
+
+# **`ab_glyph`, `serde` and `ron` left this manifest in M6.6b** (ADR-0038),
+# with the glyph atlas and the layout that used them. They are declared by
+# `narvo-render2d` now, which is where D10's rasteriser choice and probe
+# M3.33's cross-platform measurement are recorded.
+#
+# Nothing here needs them any more: what stayed is `model_image` and `over` in
+# [`crate::text`], the CPU model a golden scene is predicted against, and they
+# use only `crate::srgb` and this crate's own `Pixels` view.

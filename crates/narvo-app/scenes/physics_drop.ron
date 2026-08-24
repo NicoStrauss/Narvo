@@ -1,0 +1,194 @@
+// The drop scene: the first content whose picture a solver computes.
+//
+// Four boxes fall onto a ground and onto each other. Everything that moves here
+// is a `rigidbody` — the eleventh registered component (M5b.3a) — and nothing in
+// this file says how it moves: rapier does, one tick at a time, through the seam
+// in `crate::physics`. The scene-file mode schedules that system since M5b.4, so
+// a scene is the third thing that can drive the solver after the demo mode and a
+// unit test.
+//
+// # What a reader is meant to be able to check by eye
+//
+// Each body carries its own atlas region, so no two of them can share a colour
+// (`ProjektPlan.md` §9.1, the rule M3.10 bought): where two boxes touch, the
+// boundary is visible. What colour each region actually *is* belongs to whoever
+// packs the atlas, not to this file — the blessed reference draws them from
+// `DROP_REGIONS` in `crates/narvo-app/src/frame.rs`:
+//
+//   ground   slate grey, the wide bar along the bottom
+//   box_a    red       starts lowest, lands first
+//   box_b    green     starts above A and comes down onto it
+//   box_c    blue      starts in the middle
+//   box_d    yellow    starts highest, is still falling when the others are down
+//
+// **A sprite drawn from a body covers the collider exactly** — the half-extents
+// become the sprite's width and height in `sprite_batch::placement_of_body`, and
+// the rotation crosses as the `(cos, sin)` pair the body holds. So what is on
+// screen is the rectangle the solver collided, at the angle it collided it at,
+// and a box resting askew on another box is the contact solver's own arithmetic
+// rather than a drawing convention.
+//
+// # The camera, and why the numbers are small
+//
+// `zoom: 10.0` makes one world unit ten pixels, so the 12.8 x 12.8 world units
+// this scene occupies fill a 128 x 128 frame. Physics is authored in world units
+// where gravity is -9.81 of them per second squared; a scene authored in pixels
+// would need a gravity of -981 and would say nothing different.
+//
+// # Values that are not exactly representable in binary, on purpose
+//
+// ADR-0013's reasoning about `motion`'s `0.017`, applied here as `sim::physics`
+// applies it: a scene of halves and quarters would agree across platforms by
+// construction and would demonstrate nothing. Every start position, velocity and
+// spin below is a value whose f32 is an approximation.
+//
+// # Region names, and the missing `assets/`
+//
+// The five names below are file stems under an `assets/` directory beside this
+// file, and this scene ships without one — ADR-0024 keeps PNGs out of the
+// repository. **A window therefore refuses to start on this file**, exactly as it
+// refuses on `click_counter.ron` and for the same reason; the runner packs an
+// atlas from the scene's own `assets/` before it opens one.
+//
+// The sanctioned repair is M4.8's: a test writes a runnable copy with generated
+// PNGs under `target/`. M5b.4 did not build one for this scene and says so rather
+// than implying otherwise — its picture is specified by a blessed reference, not
+// by a window, and the generator is a named follow-up in that task's report.
+Scene(
+    entities: [
+        // The eye. First in the file, so it is the lowest entity id and
+        // therefore the camera `sprite_batch::camera_of` picks.
+        (
+            name: "eye",
+            components: {
+                "camera": (x: 0.0, y: 0.0, zoom: 10.0),
+            },
+        ),
+
+        // The ground. Fixed, so the solver never moves it, and wide enough that
+        // nothing walks off it inside the frame.
+        (
+            name: "ground",
+            components: {
+                "rigidbody": (
+                    kind: 0,
+                    half_x: 5.9,
+                    half_y: 0.43,
+                    x: 0.0,
+                    y: -5.37,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: 0.0,
+                    vel_y: 0.0,
+                    angvel: 0.0,
+                    restitution: 0.0,
+                    friction: 0.73,
+                    density: 1.0,
+                ),
+                "layer": (depth: 0.0),
+                "sprite": (region: "ground"),
+                "sampling": (filter: 1),
+            },
+        ),
+
+        // A, lowest and first to land.
+        (
+            name: "box_a",
+            components: {
+                "rigidbody": (
+                    kind: 1,
+                    half_x: 0.9,
+                    half_y: 0.6,
+                    x: -3.07,
+                    y: -3.9,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: 0.41,
+                    vel_y: -0.19,
+                    angvel: 0.53,
+                    restitution: 0.42,
+                    friction: 0.73,
+                    density: 1.3,
+                ),
+                "layer": (depth: 1.0),
+                "sprite": (region: "box_a"),
+                "sampling": (filter: 1),
+            },
+        ),
+
+        // B, above A and coming down onto it.
+        (
+            name: "box_b",
+            components: {
+                "rigidbody": (
+                    kind: 1,
+                    half_x: 0.9,
+                    half_y: 0.6,
+                    x: -2.71,
+                    y: -1.3,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: -0.23,
+                    vel_y: -0.11,
+                    angvel: -0.37,
+                    restitution: 0.42,
+                    friction: 0.73,
+                    density: 1.3,
+                ),
+                "layer": (depth: 2.0),
+                "sprite": (region: "box_b"),
+                "sampling": (filter: 1),
+            },
+        ),
+
+        // C, in the middle of the frame.
+        (
+            name: "box_c",
+            components: {
+                "rigidbody": (
+                    kind: 1,
+                    half_x: 0.9,
+                    half_y: 0.6,
+                    x: 1.13,
+                    y: -0.3,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: -0.31,
+                    vel_y: -0.29,
+                    angvel: 0.61,
+                    restitution: 0.42,
+                    friction: 0.73,
+                    density: 1.3,
+                ),
+                "layer": (depth: 3.0),
+                "sprite": (region: "box_c"),
+                "sampling": (filter: 1),
+            },
+        ),
+
+        // D, highest and last.
+        (
+            name: "box_d",
+            components: {
+                "rigidbody": (
+                    kind: 1,
+                    half_x: 0.9,
+                    half_y: 0.6,
+                    x: 3.29,
+                    y: 2.1,
+                    rot_cos: 1.0,
+                    rot_sin: 0.0,
+                    vel_x: -0.17,
+                    vel_y: -0.13,
+                    angvel: -0.47,
+                    restitution: 0.42,
+                    friction: 0.73,
+                    density: 1.3,
+                ),
+                "layer": (depth: 4.0),
+                "sprite": (region: "box_d"),
+                "sampling": (filter: 1),
+            },
+        ),
+    ],
+)
