@@ -25,20 +25,27 @@
 /// M8.6's write-back — are all inside this crate, so nothing is exported until
 /// something outside needs it.
 ///
-/// **In a non-test build nothing calls into it yet, and the attribute says so
-/// rather than the module being quietly gated.** M8.2 builds the multi-pass
-/// machinery; the first production caller is M8.3's jump flooding. `expect`
-/// rather than `allow`, for the reason `narvo-app`'s `SceneHost::registry`
-/// records: an expectation that stops being needed becomes an
-/// unfulfilled-lint warning and this workspace denies warnings, so **the day
-/// M8.3 lands a caller the compiler forces this attribute out**. `not(test)`
-/// because the tests inside the module do call it.
+/// **M8.3a landed the first production caller and this attribute did not go
+/// away, which is a measurement rather than an oversight.** `FieldKernel` and
+/// `run` are called from [`OffscreenTarget::distance_field`] now; what is still
+/// dead in a non-test build is the *transport* kernel — `TRANSPORT_WGSL`,
+/// `TRANSPORT_ENTRY` and the `PassParams` comparison — because a kernel is
+/// per-shader, jump flooding compiles its own, and the transport kernel is
+/// M8.2's oracle rather than anything a production path will ever run. A
+/// module-level expectation is fulfilled by *any* dead item inside the module,
+/// so those keep it alive on their own.
+///
+/// **M8.2's stated reason was therefore not merely early, it was unreachable**,
+/// and it is corrected below rather than left to be re-read as a promise. The
+/// `expect`-not-`allow` mechanism did exactly its job: it is why the day M8.3
+/// landed, the compiler had an opinion about which of these five attributes were
+/// still true. Two of the five went; this is one of the three that stayed.
 #[cfg(feature = "gpu")]
 #[cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+        reason = "the transport kernel is M8.2's oracle: no production path compiles it, only tests do"
     )
 )]
 mod compute;
@@ -46,15 +53,13 @@ mod compute;
 mod error;
 /// The buffer a compute pass reads and the one it writes.
 ///
-/// Carries the same `expect(dead_code)` as [`compute`] and for the same reason.
+/// **Carried an `expect(dead_code)` from M8.2 until M8.3a, and the compiler took
+/// it away.** [`OffscreenTarget::distance_field`] seeds a `FieldPair`, runs a
+/// chain over it and reads it back, so `Field` and `FieldPair` are reached from
+/// a public item and the module is no longer dead in a non-test build. It is
+/// gone rather than relaxed, which is the whole reason M8.2 wrote `expect`
+/// instead of `allow`.
 #[cfg(feature = "gpu")]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
-    )
-)]
 mod field;
 /// The M3.34 glyph atlas, and the single-line layout that consumes it.
 ///
@@ -76,6 +81,17 @@ mod gpu;
 mod offscreen;
 #[cfg(feature = "gpu")]
 mod quad;
+/// The distance field, computed by jump flooding over a [`field`] pair.
+///
+/// **The first consumer of the M8.2 machinery, and the first thing here that is
+/// exported.** `compute`'s header says nothing leaves the crate until something
+/// outside needs it; M8.3b turns occluders into seeds and M8.4 marches a ray
+/// against the distances, and both are outside. Re-exported flat like every
+/// other module rather than made `pub`, so `Seeds` and `SeedMap` read as
+/// `narvo_render2d::Seeds` — two names that say what they are without their
+/// module in front of them.
+#[cfg(feature = "gpu")]
+mod sdf;
 #[cfg(feature = "gpu")]
 mod sprite;
 /// IEC 61966-2-1's transfer function, both directions.
@@ -99,6 +115,8 @@ pub use crate::golden::{
 };
 #[cfg(feature = "gpu")]
 pub use crate::offscreen::{ClearColor, OffscreenTarget, Pixels};
+#[cfg(feature = "gpu")]
+pub use crate::sdf::{SeedMap, Seeds};
 #[cfg(feature = "gpu")]
 pub use crate::sprite::{
     BatchOf, CameraView, MAX_SPRITES_PER_BATCH, PaddingDefect, Projection, REGION_PADDING_TEXELS,

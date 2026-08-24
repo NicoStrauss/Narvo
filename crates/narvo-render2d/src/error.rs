@@ -120,6 +120,22 @@ pub enum RenderError {
         /// Floats actually supplied.
         actual: usize,
     },
+    /// A seed was placed outside the field it belongs to.
+    ///
+    /// Separate from [`RenderError::InvalidSize`], which is about the field's
+    /// own dimensions rather than about a point inside it. The two would
+    /// otherwise share a message that could not say which of the numbers in it
+    /// was the offending one.
+    SeedOutsideField {
+        /// Column the seed was placed at.
+        x: u32,
+        /// Row the seed was placed at.
+        y: u32,
+        /// Width of the field it was placed in.
+        width: u32,
+        /// Height of that field.
+        height: u32,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -166,6 +182,16 @@ impl fmt::Display for RenderError {
             } => write!(
                 f,
                 "a {width}x{height} field needs {expected} floats, four per texel, but {actual} were given"
+            ),
+            Self::SeedOutsideField {
+                x,
+                y,
+                width,
+                height,
+            } => write!(
+                f,
+                "a seed at ({x}, {y}) is outside a {width}x{height} field: \
+                 columns run 0..{width} and rows 0..{height}"
             ),
             Self::NoAdapter { attempts } => write!(
                 f,
@@ -225,6 +251,7 @@ impl Error for RenderError {
             | Self::BatchTooLarge { .. }
             | Self::PixelBufferSize { .. }
             | Self::FieldTexelCount { .. }
+            | Self::SeedOutsideField { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
             | Self::NoAdapter { .. } => None,

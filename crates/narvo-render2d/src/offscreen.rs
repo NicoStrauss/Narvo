@@ -13,6 +13,7 @@ use crate::error::RenderError;
 use crate::field::{Field, FieldPair};
 use crate::gpu;
 use crate::quad::QuadPipeline;
+use crate::sdf::{self, SeedMap, Seeds};
 use crate::sprite::{
     BatchOf, CameraView, MAX_SPRITES_PER_BATCH, Projection, SpriteBatch, SpriteFilter,
     SpriteInstance, SpritePlacement, batch_plan, batch_vertices,
@@ -480,6 +481,14 @@ impl OffscreenTarget {
     /// involved: a field is its own allocation, in its own format, and drawing
     /// into it is not possible on purpose (`field.rs`'s `FIELD_USAGE`).
     ///
+    /// **Still dead in a non-test build after M8.3a, and the reason has changed
+    /// rather than merely not yet arrived.** The production caller M8.2
+    /// predicted did land — [`Self::distance_field`] — but a chain needs the
+    /// *pair*, so it goes through [`Self::field_pair`] and never through here.
+    /// `FieldPair::new` builds its two fields from `Field::new` directly. The
+    /// only callers of this accessor are `field.rs`'s own tests, which is what
+    /// the corrected reason below says.
+    ///
     /// # Errors
     ///
     /// [`RenderError::InvalidSize`] as for [`Self::new`].
@@ -487,7 +496,7 @@ impl OffscreenTarget {
         not(test),
         expect(
             dead_code,
-            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+            reason = "a chain needs a pair: `distance_field` goes through `field_pair`, and only tests want one field"
         )
     )]
     pub(crate) fn field(&self, width: u32, height: u32, label: &str) -> Result<Field, RenderError> {
@@ -496,16 +505,13 @@ impl OffscreenTarget {
 
     /// Two fields to alternate between, for a chain of passes.
     ///
+    /// **Carried an `expect(dead_code)` from M8.2 until M8.3a, and the compiler
+    /// took it away**: [`Self::distance_field`] is the production caller M8.2
+    /// named, and it wants the pair rather than a single field.
+    ///
     /// # Errors
     ///
     /// As [`Self::field`].
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
-        )
-    )]
     pub(crate) fn field_pair(
         &self,
         width: u32,
@@ -517,16 +523,24 @@ impl OffscreenTarget {
 
     /// The transport kernel, compiled on this target's device.
     ///
-    /// M8.2 ships exactly one compute kernel and this is it; M8.3's jump
-    /// flooding is the second, and it arrives beside this one rather than
-    /// through a parameter, because a `&str` of WGSL in a signature would be a
-    /// knob with one setting today and a way to compile arbitrary shaders
-    /// tomorrow.
+    /// M8.2 ships exactly one compute kernel and this is it; M8.3a's jump
+    /// flooding is the second, and it arrived beside this one exactly as
+    /// predicted — [`Self::distance_field`] builds its own `FieldKernel` from
+    /// `sdf::JUMP_FLOOD_WGSL` rather than taking a `&str` of WGSL through a
+    /// parameter, because that parameter would be a knob with one setting today
+    /// and a way to compile arbitrary shaders tomorrow.
+    ///
+    /// **Which is why this one is still dead, and will stay dead.** M8.2's
+    /// reason read "the multi-pass machinery precedes its first caller: M8.3's
+    /// jump flooding" — but jump flooding compiles its own kernel, so no caller
+    /// of *this* one was ever going to arrive from that direction. It is the
+    /// transport oracle, its callers are `compute.rs`'s tests, and the corrected
+    /// reason below says so instead of naming a caller that cannot come.
     #[cfg_attr(
         not(test),
         expect(
             dead_code,
-            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+            reason = "the transport kernel is M8.2's oracle: jump flooding compiles its own, so only tests want this one"
         )
     )]
     pub(crate) fn transport_kernel(&self) -> FieldKernel {
@@ -537,6 +551,66 @@ impl OffscreenTarget {
             compute::TRANSPORT_WGSL,
             compute::TRANSPORT_ENTRY,
         )
+    }
+
+    /// For every texel of `seeds`, the nearest seeded texel.
+    ///
+    /// **The first production caller of M8.2's multi-pass machinery**, and the
+    /// whole of what M8.3a ships: a seed set goes in, a [`SeedMap`] comes out,
+    /// and no `wgpu` type is involved on either side.
+    ///
+    /// # What it does
+    ///
+    /// Seeds the read half of a `FieldPair` with `seeds`, runs one pass per
+    /// entry of `sdf::jump_flood_steps` — descending
+    /// powers of two from the largest below the longer side down to one — and
+    /// reads the result back. The comparison inside the kernel is in integer
+    /// arithmetic, which M8.3a decided by measurement rather than by preference;
+    /// `shaders/jump_flood.wgsl`'s header carries the numbers.
+    ///
+    /// Jump flooding is an **approximation**, and `sdf.rs`'s header carries how
+    /// far off it was measured to be: exact on four of five arrangements, and 27
+    /// of 16 384 texels on a rasterised ring, none of them naming a seed more
+    /// than 0.2425 texels farther than the nearest.
+    ///
+    /// # What it costs
+    ///
+    /// A compute pipeline is compiled and a field pair is allocated **on every
+    /// call**. At 1920 x 1080 that pair is 66.4 MB (`field.rs`'s `FIELD_FORMAT`).
+    /// Right for a caller that computes a field once; wrong for one that computes
+    /// it every frame — and M8.3b is the task that will know which it is. The
+    /// reopening is a compiled-pass object holding both, which is a larger public
+    /// surface and so is not built on a guess.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::FieldTexelCount`] cannot occur — the buffer is built from
+    /// the same dimensions the pair is — but is threaded rather than unwrapped,
+    /// because `Seeds` and the pair being one size is an invariant of this
+    /// function and not of the types. [`RenderError::InvalidSize`] if the seed
+    /// set's dimensions are ones a field cannot have, and
+    /// [`RenderError::Readback`] if the copy back to the CPU fails.
+    pub fn distance_field(&self, seeds: &Seeds) -> Result<SeedMap, RenderError> {
+        let width = seeds.width();
+        let height = seeds.height();
+        let mut pair = self.field_pair(width, height, "narvo distance field")?;
+        pair.read().write(&seeds.texels())?;
+
+        let kernel = FieldKernel::new(
+            &self.device,
+            &self.queue,
+            "narvo jump flood",
+            sdf::JUMP_FLOOD_WGSL,
+            sdf::JUMP_FLOOD_ENTRY,
+        );
+        let steps = sdf::jump_flood_steps(width, height);
+        kernel.run(&mut pair, &steps)?;
+
+        Ok(SeedMap::from_texels(
+            width,
+            height,
+            &pair.read().read_back()?,
+        ))
     }
 
     /// Copies whatever the target currently holds back to the CPU.
