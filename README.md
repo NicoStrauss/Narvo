@@ -1,13 +1,6 @@
 # Narvo
 
-<!-- The CI badge that stood here until U2 pointed at `NicoStrauss/AmbossGameEngine`,
-     the repository D29 replaces. A badge whose URL 404s on the front page is worse
-     than no badge, so it is out rather than left to rot.
-
-     U3 deliberately does not set it again: the public repository does not exist
-     yet, so its URL is not known, and a badge is a URL. Whoever creates that
-     repository sets the badge here, against the workflow that actually runs in
-     it. This comment is the marker for that one outstanding edit. -->
+[![CI](https://github.com/NicoStrauss/Narvo/actions/workflows/ci.yml/badge.svg)](https://github.com/NicoStrauss/Narvo/actions/workflows/ci.yml)
 
 Narvo is an AI-first 2D game engine written in Rust. AI-first means the engine is
 built so that humans and coding agents can both work on it and with it: a small set

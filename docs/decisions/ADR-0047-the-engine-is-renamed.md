@@ -40,6 +40,13 @@ else.
 > exclusivity and is stated exactly: after the filesystem paths moved, this
 > file is the only place in the engine that spells the old **paths**. It is
 > still not the only place that spells the old **name**.
+>
+> **Re-counted in U4 (24.08.2026): the same sweep now finds seven.** The badge
+> comment U3 left in `README.md` was the marker for one outstanding edit, and U4
+> made it — the front page carries the CI badge for `NicoStrauss/Narvo` and no
+> longer names `AmbossGameEngine`, so `README.md` leaves the list. The remaining
+> seven are unchanged, `%TEMP%\amboss-golden-app\` deliberately so: U4 was sent to
+> rename it and did not, for a reason recorded under item 3 below.
 
 ### The occasion
 
@@ -111,6 +118,47 @@ survives in exactly four kinds of place, each for a reason that is not inertia:
 > byte for byte against `HEAD` — and deliberately creates no repository,
 > pushes to no new remote and changes no visibility. Those are a human's
 > handgriffe, and they are what item 3's parenthesis is still waiting for.
+>
+> **Nachgetragen in U4 (24.08.2026): the handgriffe were done, and item 3's
+> parenthesis is now half true rather than false.** Measured through `gh api`
+> rather than assumed: `NicoStrauss/Narvo` exists, is **public**, was created
+> `2026-08-24T12:06:13Z`, and is the `origin` this working copy pushes to. So the
+> repository *was* replaced — but by a human between U3 and U4, not in U2, and
+> item 3's `(replaced in U2)` names the wrong task in the same way item 2's line
+> did.
+>
+> **The other half is still outstanding, and is left standing rather than
+> reported as done.** `NicoStrauss/AmbossGameEngine` has not gone: it exists and
+> is **private** (`gh api repos/NicoStrauss/AmbossGameEngine`, created
+> `2026-08-06T12:17:31Z`). Deleting or archiving it is a human's handgriff and
+> nothing in this repository can do it, so this marker keeps waiting for that one
+> and says so.
+>
+> **Item 3's other entry, `%TEMP%\amboss-golden-app\`, was re-examined in U4 and
+> stands.** U4 was told that U3 had filed it under D31 — the drawer for rendered
+> fixtures whose pixels would move — and that this was the wrong drawer, since a
+> temp-directory name has no pixels. The first half is right and the conclusion
+> does not follow: item 3 holds that name for a different and stronger reason
+> than D31 ever did, and the reason is checkable. The directory
+> `%TEMP%\amboss-golden-app` **is on the reference machine right now** — `%TEMP%`
+> resolving to `C:\Users\Nico\AppData\Local\Temp`, mtime 15.08.2026 18:10 —
+> beside twenty-five `amboss-golden-unit-<pid>` siblings from 07–08.08.2026.
+> The sentence in `narvo-render2d/src/golden.rs` is a record of
+> where M3.10's `std::env::temp_dir` fallback actually put an artifact nobody
+> found; renaming it would make `golden.rs` describe a directory that has never
+> existed while the one it names sits on disk. Nothing mechanical depends on the
+> string — `golden_artifact_dir` derives from `current_exe` and no test names it —
+> so the cost of renaming is not a red test, it is a false sentence, which is the
+> more expensive of the two here.
+>
+> **What the new repository proved on its own, before any of U4's diff reached
+> it.** The initial commit `6935949` carried run number 1 of both workflows, and
+> both are `status=completed, conclusion=success` — CI's four jobs
+> (`checks (ubuntu-latest)` 1186 s, `checks (windows-latest)` 1553 s,
+> `cargo-deny` 53 s, `determinism (cross-platform)` 38 s) and release
+> determinism's three. The workflows therefore work in this repository, on cold
+> caches, well inside the 60-minute backstop; a later red run is about what was
+> pushed and not about the move.
 
 ### And one kind that was found by a failing test
 

@@ -1248,12 +1248,22 @@ mod tests {
 
     /// Root-level file names that would grant a licence by existing.
     ///
-    /// Scoped to the repository root deliberately. `crates/narvo-testkit/assets/`
-    /// holds `DejaVuSansMono-LICENSE.txt`, and that one is *foreign* and has to
-    /// stay exactly where it is — the font's own terms require its licence to
-    /// travel beside it. A guard that swept the whole tree for `LICENSE*` would
-    /// demand the deletion of the one licence file this repository is actually
-    /// obliged to carry.
+    /// Scoped to the repository root deliberately.
+    /// `crates/narvo-render2d/assets/` holds `DejaVuSansMono-LICENSE.txt`, and
+    /// that one is *foreign* and has to stay exactly where it is — the font's own
+    /// terms require its licence to travel beside it. A guard that swept the
+    /// whole tree for `LICENSE*` would demand the deletion of the one licence
+    /// file this repository is actually obliged to carry.
+    ///
+    /// **This sentence named `…-testkit/assets/` from the licence removal on
+    /// 14.08.2026 (ADR-0037) until U4**, and was right for the first four hours
+    /// of that: M6.6b moved the font and its licence into `…-render2d` the same
+    /// evening (ADR-0038) and left the sentence behind. It is corrected rather
+    /// than marked, because a comment is not a record — nothing rests on what it
+    /// used to say, and ADR-0037 carries the marked version. What the path *is*
+    /// is checked by [`the_foreign_licence_is_where_the_notice_says_it_is`],
+    /// against `LICENSE` and not against this line — this copy is still prose,
+    /// and prose is guarded by nobody.
     const FORBIDDEN_LICENCE_FILES: &[&str] = &["LICENSE-MIT", "LICENSE-APACHE", "COPYING"];
 
     /// The sentence `LICENSE` and `README.md` both have to keep saying.
@@ -1451,6 +1461,153 @@ mod tests {
             "README.md no longer says {RESERVATION:?}. The machine-readable half of this \
              is guarded above, and this is the half a human actually reads - the v0.96 \
              rule is that a fact can be guarded while the text asserting it is not."
+        );
+    }
+
+    /// Every path `LICENSE` names is a path this repository has.
+    ///
+    /// The notice's last paragraph points at the one foreign licence this
+    /// repository is obliged to carry, and for ten days it pointed at nothing.
+    /// It named `…-testkit/assets/`, which was right when it was written and
+    /// stopped being right four hours later, when M6.6b moved the font and its
+    /// licence into `crates/narvo-render2d/assets/` along with the text path
+    /// (ADR-0038) and did not move the four sentences naming the old place.
+    /// Three files still repeated it after U3 fixed the fourth, and no test read
+    /// any of them, so the claim was checked by nobody.
+    ///
+    /// # Why this is a separate guard and not one more assertion above
+    ///
+    /// [`the_repository_grants_no_licence`] *reads `LICENSE`* - it opens the very
+    /// file carrying the false sentence - and asks two questions of its text:
+    /// that [`RESERVATION`] appears in it and that no [`GRANTING_PHRASES`] entry
+    /// does. Both were true throughout. A guard can hold a file open and look
+    /// straight past the one sentence in it that is wrong, which is why the
+    /// question here is a different *kind* of question rather than one more
+    /// string comparison.
+    ///
+    /// Measured, with the injection written before this guard was: with
+    /// `crates/narvo-testkit/assets/` put back into `LICENSE`, all **32** tests of
+    /// this crate passed. Nothing in the tree said a word.
+    ///
+    /// # Existence alone is not enough, and that is measured rather than argued
+    ///
+    /// The obvious repair - assert the named path is there - would itself have
+    /// reported green on the working copy where the defect lived, and the reason
+    /// is the move that caused the defect. Deleting the two files left the
+    /// **directory** behind, because git removes files and not directories, so
+    /// `…-testkit/assets/` sat there empty and untracked from 14.08.2026 onwards
+    /// and [`Path::exists`] answered `true` for it. It is still there in
+    /// `D:\Narvo-archive`. `git ls-files` is the half that tells the truth: two
+    /// files under `crates/narvo-render2d/assets/` and nothing under any other
+    /// `assets/`. That gap is the whole hazard - an untracked directory is a fact
+    /// about one machine and not about the tree - so a directory the notice names
+    /// has to be **non-empty**, and the sentence's actual claim, that a font's
+    /// licence *sits beside it*, is checked as such.
+    ///
+    /// # What it does not catch
+    ///
+    /// A backticked name carrying no separator. `Cargo.lock` is named in the same
+    /// paragraph and is deliberately outside this check: broadening the rule to
+    /// bare filenames would take `MIT OR Apache-2.0` and any version number
+    /// written in backticks with it, and a guard that cries wolf gets weakened
+    /// rather than repaired. Nor does it read the two other files that repeat the
+    /// path - ADR-0037, and this file's own comment on
+    /// [`FORBIDDEN_LICENCE_FILES`] - which stay prose under the v0.96 rule that a
+    /// fact can be guarded while the text asserting it is not. Nor does it read
+    /// the licence file's *contents*: that the bytes beside the font really are
+    /// DejaVu's terms is not a question this asks.
+    #[test]
+    fn the_foreign_licence_is_where_the_notice_says_it_is() {
+        let root = workspace_root();
+        let notice = read(&["LICENSE"]);
+
+        // A backticked span is a path when it carries a separator and no space.
+        // That admits `crates/narvo-render2d/assets/` and excludes the other two
+        // kinds of name the notice writes in backticks - an SPDX expression and a
+        // manifest key.
+        let named: Vec<String> = backtick_names(&notice)
+            .into_iter()
+            .filter(|name| name.contains('/') && !name.contains(' ') && !name.contains("://"))
+            .collect();
+
+        assert!(
+            !named.is_empty(),
+            "LICENSE names no path at all. Its last paragraph exists to point at the \
+             foreign material this repository carries - the DejaVu Sans Mono font and the \
+             licence travelling beside it - and a notice pointing nowhere leaves that \
+             material unattributed. Without this, a guard that found nothing to check \
+             would report green."
+        );
+
+        let mut directories: Vec<PathBuf> = Vec::new();
+
+        for name in &named {
+            // Trimmed rather than joined as written: a trailing separator is how
+            // the notice spells a directory, and trimming it makes the question of
+            // how each platform resolves one moot instead of assumed.
+            let path = root.join(name.trim_end_matches('/'));
+
+            assert!(
+                path.exists(),
+                "LICENSE names `{name}`, and {} is not there.\nThat paragraph is the whole \
+                 attribution of the third-party material this repository carries, so a \
+                 path in it that resolves to nothing attributes the font to somewhere that \
+                 does not exist. Correct the notice, or move what it names.",
+                path.display()
+            );
+
+            if path.is_dir() {
+                let entries = fs::read_dir(&path)
+                    .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
+                    .count();
+
+                assert!(
+                    entries > 0,
+                    "LICENSE names `{name}` and {} is empty.\nAn empty directory answers an \
+                     existence check with `true`, which is how the wrong path survived \
+                     being pointed at for ten days: it was present in the working copy and \
+                     held nothing. A directory the notice names has to contain what the \
+                     notice says is in it.",
+                    path.display()
+                );
+
+                directories.push(path);
+            }
+        }
+
+        // The sentence's substantive claim: the font's licence travels beside the
+        // font. Checked where the notice points rather than at a path written out
+        // here, so that moving the assets moves the check with them.
+        let travelling = directories.iter().any(|directory| {
+            let names: Vec<String> = fs::read_dir(directory)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", directory.display()))
+                .map(|entry| {
+                    entry
+                        .unwrap_or_else(|error| {
+                            panic!("cannot read an entry of {}: {error}", directory.display())
+                        })
+                        .file_name()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+
+            names
+                .iter()
+                .any(|name| name.ends_with(".ttf") || name.ends_with(".otf"))
+                && names
+                    .iter()
+                    .any(|name| name.to_uppercase().contains("LICENSE"))
+        });
+
+        assert!(
+            travelling,
+            "LICENSE says a font's own licence `sits beside it`, and no directory the \
+             notice names holds both a font file and a licence file. The font's terms \
+             require the two to travel together, so this is the sentence in that paragraph \
+             that can stop being true without anybody editing it - by a font being moved, \
+             or by its licence being tidied away from beside it.\n  directories named: \
+             {directories:?}"
         );
     }
 }

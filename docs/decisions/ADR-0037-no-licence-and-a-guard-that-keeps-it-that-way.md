@@ -58,6 +58,47 @@ travel beside the font. The same reasoning covers every dependency: their
 licences are their authors' to give, and `deny.toml`'s `allow` list, its
 `triple_buffer` exception and D5's standing lawyer item are all unchanged.
 
+> **Corrected in U4 (24.08.2026): the path in the sentence above stopped being
+> true four hours after it was written, and it is marked rather than silently
+> repointed.** The file is
+> `crates/narvo-render2d/assets/DejaVuSansMono-LICENSE.txt`. Today `git ls-files`
+> names two files under `crates/narvo-render2d/assets/` and nothing under any
+> other `assets/` directory.
+>
+> **It was right when M6b.2b wrote it, and that is the point of the marker.**
+> Measured rather than assumed, and U4's first draft of this paragraph got it
+> backwards before the history was read: at the licence commit — 14.08.2026
+> 15:44 — the font and its licence really did sit under `…-testkit/assets/`,
+> where M3.34 had put them on 10.08.2026. **M6.6b moved them the same evening, at
+> 19:46**, when the glyph atlas and the text layout went into `…-render2d`
+> (ADR-0038). Four sentences naming the old location did not move with the files,
+> and no commit sits between the two. U1a's rename then carried the stale path
+> faithfully into its new spelling on 20.08.2026, which is how
+> `amboss-testkit/assets/` became `narvo-testkit/assets/` — a path that had been
+> wrong for six days by then, renamed rather than checked.
+>
+> **This is a correction and not an amendment.** The decision this ADR records —
+> no licence, and a guard that keeps it that way — does not move by a word, and
+> neither does the reasoning in this paragraph: a foreign licence is still
+> foreign, still untouched, and still required to travel beside its font. Only
+> the address went stale, and the sentence is left standing because a reader who
+> meets the old path elsewhere needs to find out here what happened to it.
+>
+> **Why nothing found it for ten days.** The guard this ADR is named for did not
+> catch it because it never asked: it *reads `LICENSE`*, and asks only whether the
+> reservation sentence is in that text and whether a granting phrase is not.
+> Measured in U4, with the stale path injected back into `LICENSE`: **32 of 32
+> `xtask` tests passed**. U3 corrected the first of the four sites (`README.md`)
+> on 24.08.2026 and reported the rest; U4 corrects them and adds
+> `the_foreign_licence_is_where_the_notice_says_it_is`, which opens what `LICENSE`
+> names instead of spell-checking it. A bare existence check would not have been
+> enough: deleting the files left the **directory** behind — git removes files and
+> not directories — so `…-testkit/assets/` sat empty in the working copy from
+> 14.08.2026 onwards and answered `Path::exists` with `true`. The two remaining
+> copies of the path — this paragraph, and the comment on
+> `FORBIDDEN_LICENCE_FILES` — stay prose, under the v0.96 rule that a fact can be
+> guarded while the text asserting it is not.
+
 ### 2. `cargo deny` is told these crates are ours, via `publish`
 
 Removing the fields turns the licence check red. Measured, in this tree rather

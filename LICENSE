@@ -34,5 +34,5 @@ it.
 
 Third-party material keeps its own terms, which are its authors' to give and
 not ours to withdraw. That includes every dependency in `Cargo.lock` and the
-DejaVu Sans Mono font under `crates/narvo-testkit/assets/`, whose own licence
+DejaVu Sans Mono font under `crates/narvo-render2d/assets/`, whose own licence
 sits beside it because its terms require it to travel with the font.
