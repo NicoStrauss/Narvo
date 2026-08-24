@@ -18,6 +18,17 @@
 //! anywhere in its dependency tree — that is what makes the headless rule in
 //! CLAUDE.md checkable with `cargo tree` rather than by reading the source.
 
+/// One cascade stage: probes, their intervals, their directions, and the
+/// radiance they integrate.
+///
+/// **M8.5a, and the first thing in this crate that makes a field of `f32` out of
+/// something other than a picture.** Its consumers are M8.5b's hierarchy, which
+/// merges stages, and M8.8's game light. Re-exported flat like every other module
+/// here, so `CascadeStage`, `Emission` and `RadianceField` read as
+/// `narvo_render2d::CascadeStage` — three names that say what they are without
+/// their module in front of them.
+#[cfg(feature = "gpu")]
+mod cascade;
 /// Compute passes over fields, and the chain that runs several of them.
 ///
 /// The crate's first compute path (M8.2). Private like every other module here;
@@ -114,6 +125,8 @@ pub mod text;
 #[cfg(feature = "gpu")]
 mod window;
 
+#[cfg(feature = "gpu")]
+pub use crate::cascade::{CascadeStage, Emission, RadianceField, StageLayout};
 #[cfg(feature = "gpu")]
 pub use crate::error::RenderError;
 #[cfg(feature = "gpu")]

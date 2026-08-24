@@ -948,6 +948,31 @@ Read the relevant ADRs before any architecture-touching task:
   the 15 tests, every GPU oracle among them, stayed green**. Reopens at a value
   that cannot be an integer, which is M8.5's radiance
 
+- `docs/decisions/ADR-0051-a-radiance-field-is-compared-byte-for-byte.md` —
+  ADR-0050's revision condition named M8.5's radiance and M8.5a is it, so this is
+  the answer rather than a new question. A radiance field is compared **byte for
+  byte**, and the rule holding that open is **no `f32` multiply may feed an `f32`
+  add** — `shaders/cascade.wgsl` contains no float multiply at all, and the
+  direction count is a power of two so the normalisation can be an exact
+  division. Measured over 160 chain executions, five variants of one kernel on
+  eight adapter/backend pairs in both profiles, twice each: the shipping form is
+  **one field in 32 of 32 cells** and equals an unfused CPU, while
+  `sum + r * 0.7` is **two** — the five AMD driver paths fuse it and the three
+  software rasterisers do not, which is ADR-0050's split by rasteriser family
+  arriving in float arithmetic instead of in a comparison. Three results correct
+  the obvious guesses: being contractible is **not** enough (a power-of-two
+  product returns the identical field, because scaling by a power of two commutes
+  with rounding); **magnitude is not the discriminator** (× 2^20 leaves one
+  field, refuting the "radiance lives in a small range" hypothesis as an
+  *explanation*); and **`fma()` is not an escape** — WARP and both llvmpipe
+  backends compute it unfused, so asking for the fusion out loud does not get it.
+  v1.52's image regime is rejected on numbers that fail in *both* directions at
+  once: `max_channel_deviation: 24` is five orders of magnitude too loose against
+  a worst deviation of 1.9e-6, and `max_differing_ratio: 0.001` is 140 × too
+  tight against the 0.140 a contracted field shows — while **zero** components
+  differ once quantised to an 8-bit channel. The guard is a source read for
+  ADR-0050's reason, and it was shown red
+
 Decisions that have *not* been made live elsewhere: `ProjektPlan.md` §11 holds
 the D table — the open questions, the recommendation for each, and the milestone
 it is due by. Check it before treating anything as settled. An ADR records a

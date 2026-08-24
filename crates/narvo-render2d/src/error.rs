@@ -159,6 +159,94 @@ pub enum RenderError {
     /// folding the two would produce a message claiming `NaN` is outside a range
     /// it is merely incomparable with.
     RayNotFinite,
+    /// A cascade stage was given a number it cannot be built from.
+    ///
+    /// One variant for the scalar faults rather than one each, because they
+    /// share a shape: a named quantity, the value it was given, and the
+    /// requirement it broke. That is the whole of the feedback, and splitting it
+    /// six ways would repeat the same sentence six times with a different noun.
+    /// The two faults that are *not* here — the angular resolution and the
+    /// direction count — are separate because their requirement is a derivation
+    /// rather than a comparison, and a caller has to be told the number.
+    StageParameter {
+        /// What was wrong, as a noun phrase that fits the message.
+        name: &'static str,
+        /// The value that was given. Zero where the fault is a count.
+        value: f32,
+        /// What it had to satisfy, as a verb phrase that fits the message.
+        requirement: &'static str,
+    },
+    /// A stage's direction count is zero or not a power of two.
+    ///
+    /// Not a tidiness rule. It is what makes the kernel's normalisation an exact
+    /// division and therefore lets the kernel hold no `f32` multiply at all —
+    /// which M8.5a measured to be the difference between one radiance field
+    /// across eight adapter/backend pairs and two.
+    DirectionsNotPowerOfTwo {
+        /// The count that was asked for.
+        directions: u32,
+    },
+    /// A stage's directions separate by more than a texel at its far end.
+    ///
+    /// Two adjacent directions are `far * 2 * pi / directions` apart along the
+    /// arc where they finish. Let that exceed one texel and an occluder can fall
+    /// between them, which shows up as a stripe where a soft shadow belongs.
+    /// The bound is the texel size and nothing else.
+    PenumbraUnderresolved {
+        /// The count that was asked for.
+        directions: u32,
+        /// The far end that outruns it.
+        far: f32,
+        /// `ceil(2 * pi * far)`, the smallest count that would do.
+        required: u32,
+    },
+    /// A stage asks for more rays than one compute dispatch can hold.
+    StageTooLarge {
+        /// Rays the stage would march: probes times directions.
+        rays: u64,
+        /// The most one dispatch reaches.
+        limit: u32,
+    },
+    /// An emission map is not the same size as the seed set beside it.
+    EmissionSizeMismatch {
+        /// Width of the seed set.
+        seed_width: u32,
+        /// Height of the seed set.
+        seed_height: u32,
+        /// Width of the emission map.
+        emission_width: u32,
+        /// Height of the emission map.
+        emission_height: u32,
+    },
+    /// A probe stands closer to an edge than its own near end.
+    ProbeOutsideField {
+        /// Column the offending probe sits at, in field texels.
+        x: f32,
+        /// Row the offending probe sits at, in field texels.
+        y: f32,
+        /// The near end it has to stand clear of every edge by.
+        near: f32,
+        /// Width of the field it was placed in.
+        width: u32,
+        /// Height of that field.
+        height: u32,
+    },
+    /// An emission value was placed outside the map it belongs to.
+    ///
+    /// Separate from [`RenderError::SeedOutsideField`] rather than sharing it:
+    /// the two are the same arithmetic about two different things, and a message
+    /// saying "a seed" about an emission value would send a reader to the wrong
+    /// call.
+    EmissionOutsideField {
+        /// Column the value was placed at.
+        x: u32,
+        /// Row the value was placed at.
+        y: u32,
+        /// Width of the map it was placed in.
+        width: u32,
+        /// Height of that map.
+        height: u32,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -232,6 +320,75 @@ impl fmt::Display for RenderError {
                 "a ray endpoint is not a finite number, so it has no position in \
                  the field at all"
             ),
+            Self::StageParameter {
+                name,
+                value,
+                requirement,
+            } => write!(
+                f,
+                "a cascade stage cannot be built: {name} is {value}, and it has to {requirement}"
+            ),
+            Self::DirectionsNotPowerOfTwo { directions } => write!(
+                f,
+                "a cascade stage of {directions} directions is not buildable: the count \
+                 must be a power of two, so that dividing a sum by it is exact. That \
+                 exactness is what keeps the kernel free of any float multiplication, \
+                 and a float multiply feeding an add is the one thing measured to make \
+                 two backends compute two different radiance fields"
+            ),
+            Self::PenumbraUnderresolved {
+                directions,
+                far,
+                required,
+            } => write!(
+                f,
+                "{directions} directions do not resolve an interval reaching {far} texels: \
+                 two adjacent directions finish {:.3} texels apart, so an occluder one \
+                 texel wide can fall between them and the soft shadow becomes a stripe. \
+                 Use at least {required} directions, or shorten the interval",
+                f64::from(*far) * std::f64::consts::TAU / f64::from(*directions)
+            ),
+            Self::StageTooLarge { rays, limit } => write!(
+                f,
+                "a cascade stage of {rays} rays is beyond one dispatch, which reaches \
+                 {limit}: split the probe grid, or use fewer directions. At 48 bytes a \
+                 ray the limit is already 201 MB of GPU buffer"
+            ),
+            Self::EmissionSizeMismatch {
+                seed_width,
+                seed_height,
+                emission_width,
+                emission_height,
+            } => write!(
+                f,
+                "an emission map of {emission_width}x{emission_height} does not go with a \
+                 seed set of {seed_width}x{seed_height}: a stage reads emission at the \
+                 seed a direction stopped on, so the two are indexed by one coordinate"
+            ),
+            Self::ProbeOutsideField {
+                x,
+                y,
+                near,
+                width,
+                height,
+            } => write!(
+                f,
+                "a probe at ({x}, {y}) with a near end of {near} does not fit a \
+                 {width}x{height} field: every probe must stand at least its near end \
+                 clear of every edge, because a direction that starts outside the field \
+                 has no position in it. The far end needs no such room - a direction \
+                 that runs off the edge is clipped there and counts as having met nothing"
+            ),
+            Self::EmissionOutsideField {
+                x,
+                y,
+                width,
+                height,
+            } => write!(
+                f,
+                "an emission value at ({x}, {y}) is outside a {width}x{height} map: \
+                 columns run 0..{width} and rows 0..{height}"
+            ),
             Self::NoAdapter { attempts } => write!(
                 f,
                 "no GPU adapter available; tried {attempts}. On a headless machine, \
@@ -293,6 +450,13 @@ impl Error for RenderError {
             | Self::SeedOutsideField { .. }
             | Self::RayOutsideField { .. }
             | Self::RayNotFinite
+            | Self::StageParameter { .. }
+            | Self::DirectionsNotPowerOfTwo { .. }
+            | Self::PenumbraUnderresolved { .. }
+            | Self::StageTooLarge { .. }
+            | Self::EmissionSizeMismatch { .. }
+            | Self::ProbeOutsideField { .. }
+            | Self::EmissionOutsideField { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
             | Self::NoAdapter { .. } => None,

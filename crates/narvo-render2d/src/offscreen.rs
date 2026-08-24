@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use crate::cascade::{CascadeKernel, CascadeStage, Emission, RadianceField};
 use crate::compute::{self, FieldKernel};
 use crate::error::RenderError;
 use crate::field::{Field, FieldPair};
@@ -482,24 +483,22 @@ impl OffscreenTarget {
     /// involved: a field is its own allocation, in its own format, and drawing
     /// into it is not possible on purpose (`field.rs`'s `FIELD_USAGE`).
     ///
-    /// **Still dead in a non-test build after M8.3a, and the reason has changed
-    /// rather than merely not yet arrived.** The production caller M8.2
-    /// predicted did land — [`Self::distance_field`] — but a chain needs the
-    /// *pair*, so it goes through [`Self::field_pair`] and never through here.
-    /// `FieldPair::new` builds its two fields from `Field::new` directly. The
-    /// only callers of this accessor are `field.rs`'s own tests, which is what
-    /// the corrected reason below says.
+    /// **Carried an `expect(dead_code)` from M8.2 until M8.5a, and the compiler
+    /// took it away.** M8.3a's reason was that a chain needs the *pair*, so
+    /// [`Self::distance_field`] goes through [`Self::field_pair`] and never
+    /// through here — true, and it stayed true. What arrived instead is a caller
+    /// that wants **one** field and never alternates: [`Self::cascade_stage`]
+    /// uploads an emission map, which is read by every pass and written by none,
+    /// so a ping-pong would be a second texture nothing ever writes.
+    ///
+    /// Worth keeping in view, because it is the second time this crate's
+    /// `expect`-not-`allow` habit has paid: the day M8.5a landed, the compiler
+    /// had an opinion about which of these attributes were still true, and this
+    /// one was not.
     ///
     /// # Errors
     ///
     /// [`RenderError::InvalidSize`] as for [`Self::new`].
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "a chain needs a pair: `distance_field` goes through `field_pair`, and only tests want one field"
-        )
-    )]
     pub(crate) fn field(&self, width: u32, height: u32, label: &str) -> Result<Field, RenderError> {
         Field::new(&self.device, &self.queue, width, height, label)
     }
@@ -681,6 +680,84 @@ impl OffscreenTarget {
         let pair = self.flood(seeds)?;
         let kernel = MarchKernel::new(&self.device, &self.queue);
         kernel.run(pair.read(), rays, budget)
+    }
+
+    /// Runs one cascade stage: marches every probe's directions and integrates.
+    ///
+    /// **M8.5a's capability, and two compute passes in one queue.** The first is
+    /// M8.4's march, unchanged; the second is `cascade.wgsl`'s integration, which
+    /// reads the hits where the march left them. The hits never come to the CPU,
+    /// so the stage pays the marshalling `march.rs`'s header measured away.
+    ///
+    /// # What a probe answers with
+    ///
+    /// The mean over its directions of what each one found: the emission of the
+    /// occluder it stopped on, or [`StageLayout::far_radiance`] if it reached the
+    /// far end of the interval having met nothing. A direction that ran out of
+    /// steps contributes nothing and is counted as neither.
+    ///
+    /// The emission is read **at the seed**, not at the point the march stopped:
+    /// a march stops up to a texel short of what stopped it, so the stopping
+    /// texel is often the empty one in front of the lamp. `cascade.wgsl` carries
+    /// the derivation.
+    ///
+    /// # What it costs
+    ///
+    /// A field pair, an emission field, a radiance field, three compiled
+    /// pipelines and a ray buffer, **on every call** — the same shape
+    /// [`Self::distance_field`] has and for the same reason. A ray is 32 bytes
+    /// and a hit is 16, so the buffers are 48 bytes times
+    /// [`CascadeStage::ray_count`]; the ceiling is
+    /// [`CascadeStage::MAX_RAYS`], which is derived from what one dispatch
+    /// reaches rather than chosen.
+    ///
+    /// # Errors
+    ///
+    /// - [`RenderError::EmissionSizeMismatch`] if the emission map is not the
+    ///   seed set's size. The two are indexed by one coordinate, so this is a
+    ///   confusion rather than a shortfall and is refused rather than padded.
+    /// - [`RenderError::ProbeOutsideField`] if a probe stands closer to an edge
+    ///   than its own near end.
+    /// - [`RenderError::Readback`] if the radiance cannot be copied back.
+    /// - [`RenderError::InvalidSize`] and [`RenderError::FieldTexelCount`] are
+    ///   threaded and cannot occur: every size involved comes from a `Seeds`, an
+    ///   `Emission` or a `CascadeStage`, each of which refused an impossible one
+    ///   when it was built. They are threaded rather than unwrapped for
+    ///   `distance_field`'s reason — the invariant belongs to this function's
+    ///   call sites rather than to the types.
+    pub fn cascade_stage(
+        &self,
+        seeds: &Seeds,
+        emission: &Emission,
+        stage: &CascadeStage,
+    ) -> Result<RadianceField, RenderError> {
+        let (width, height) = (seeds.width(), seeds.height());
+        if emission.width() != width || emission.height() != height {
+            return Err(RenderError::EmissionSizeMismatch {
+                seed_width: width,
+                seed_height: height,
+                emission_width: emission.width(),
+                emission_height: emission.height(),
+            });
+        }
+        stage.check_fits(width, height)?;
+
+        let rays = stage.rays(width, height)?;
+        let pair = self.flood(seeds)?;
+
+        let emitter = self.field(width, height, "narvo cascade emission")?;
+        emitter.write(emission.texels())?;
+
+        let march = MarchKernel::new(&self.device, &self.queue);
+        let (ray_buffer, hit_buffer) = march.dispatch(pair.read(), &rays, derived_budget(&rays));
+
+        CascadeKernel::new(&self.device, &self.queue).run(
+            pair.read(),
+            &emitter,
+            &ray_buffer,
+            &hit_buffer,
+            stage,
+        )
     }
 
     /// Copies whatever the target currently holds back to the CPU.

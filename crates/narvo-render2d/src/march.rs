@@ -369,24 +369,35 @@ impl MarchKernel {
         }
     }
 
-    /// Marches every ray against `field` and reads the answers back.
+    /// Marches every ray against `field` and leaves the answers **on the GPU**.
     ///
-    /// The **field stays on the GPU**; what crosses back is sixteen bytes a ray.
-    /// That is the whole architectural point of this module and the reason the
-    /// 16.9 ms of CPU marshalling in this module's header does not apply here.
+    /// Returns the ray buffer and the hit buffer, in that order, with the march
+    /// already submitted. Both are storage buffers a later pass in the same
+    /// queue can bind; the hit buffer also carries `COPY_SRC`, which is what
+    /// [`Self::run`] uses to bring it back.
     ///
-    /// # Errors
+    /// **This split is M8.5a's, and it is the whole of what the cascade needed
+    /// from M8.4.** A stage marches a probe's directions and then integrates
+    /// them, and a round trip to the CPU in between would pay exactly the
+    /// marshalling cost this module's header measured away. Nothing about what
+    /// the march *computes* moved: `run` is this function plus the read-back it
+    /// always did, and M8.4's fourteen tests are unchanged.
     ///
-    /// [`RenderError::Readback`] if the answers could not be copied back.
-    pub(crate) fn run(
+    /// # Panics
+    ///
+    /// `rays` must not be empty — a zero-sized storage buffer is not a thing
+    /// wgpu will create. Both callers check first, which is why this takes no
+    /// `Result` for it.
+    pub(crate) fn dispatch(
         &self,
         field: &Field,
         rays: &[Ray],
         max_steps: u32,
-    ) -> Result<Vec<MarchHit>, RenderError> {
-        if rays.is_empty() {
-            return Ok(Vec::new());
-        }
+    ) -> (wgpu::Buffer, wgpu::Buffer) {
+        assert!(
+            !rays.is_empty(),
+            "a march of no rays has no buffers to dispatch over"
+        );
 
         let mut ray_bytes = Vec::with_capacity(rays.len() * 32);
         for ray in rays {
@@ -446,13 +457,6 @@ impl MarchKernel {
             ],
         });
 
-        let transfer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("narvo march read-back"),
-            size: hit_bytes,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -470,6 +474,43 @@ impl MarchKernel {
                 .div_ceil(MARCH_WORKGROUP);
             pass.dispatch_workgroups(groups, 1, 1);
         }
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        (ray_buffer, hit_buffer)
+    }
+
+    /// [`Self::dispatch`], then the sixteen bytes a ray brought back.
+    ///
+    /// The **field stays on the GPU**; what crosses back is the hits. That is
+    /// the architectural point of this module and the reason the 16.9 ms of CPU
+    /// marshalling in this module's header does not apply here.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Readback`] if the answers could not be copied back.
+    pub(crate) fn run(
+        &self,
+        field: &Field,
+        rays: &[Ray],
+        max_steps: u32,
+    ) -> Result<Vec<MarchHit>, RenderError> {
+        if rays.is_empty() {
+            return Ok(Vec::new());
+        }
+        let hit_bytes = (rays.len() * 16) as u64;
+        let (_rays, hit_buffer) = self.dispatch(field, rays, max_steps);
+
+        let transfer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("narvo march read-back"),
+            size: hit_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("narvo march read-back"),
+            });
         encoder.copy_buffer_to_buffer(&hit_buffer, 0, &transfer, 0, hit_bytes);
         self.queue.submit(std::iter::once(encoder.finish()));
 
