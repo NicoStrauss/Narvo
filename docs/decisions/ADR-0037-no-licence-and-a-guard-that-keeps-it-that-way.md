@@ -71,11 +71,24 @@ licences are their authors' to give, and `deny.toml`'s `allow` list, its
 > 15:44 — the font and its licence really did sit under `…-testkit/assets/`,
 > where M3.34 had put them on 10.08.2026. **M6.6b moved them the same evening, at
 > 19:46**, when the glyph atlas and the text layout went into `…-render2d`
-> (ADR-0038). Four sentences naming the old location did not move with the files,
-> and no commit sits between the two. U1a's rename then carried the stale path
-> faithfully into its new spelling on 20.08.2026, which is how
-> `amboss-testkit/assets/` became `narvo-testkit/assets/` — a path that had been
-> wrong for six days by then, renamed rather than checked.
+> (ADR-0038). Four sentences naming the old location did not move with the files.
+>
+> **Six commits sit between the two, and that is the sharper half of this.** U4's
+> first count of them said none, from a `git rev-list` range written the wrong way
+> round — the third unchecked claim this correction has had to withdraw, and the
+> third the archive settled in under a minute. They run from 16:03 to 19:10 on
+> that same afternoon, and **two of them are about the licence surface**:
+> `b7ed46e` corrects the README's account of when the dual licence arrived, and
+> `cf10e82` is *"the licence surface is neutralised, and found work is
+> re-measured"*. So the four sentences were not merely left behind by a move
+> nobody revisited; they survived an afternoon that twice went back over the
+> licence surface on purpose. Re-reading prose is not the same as opening what it
+> names, which is the whole argument for the guard below.
+>
+> U1a's rename then carried the stale path faithfully into its new spelling on
+> 20.08.2026, which is how `amboss-testkit/assets/` became
+> `narvo-testkit/assets/` — a path that had been wrong for six days by then,
+> renamed rather than checked. A rename spells; it does not resolve.
 >
 > **This is a correction and not an amendment.** The decision this ADR records —
 > no licence, and a guard that keeps it that way — does not move by a word, and
