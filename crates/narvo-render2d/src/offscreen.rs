@@ -561,10 +561,10 @@ impl OffscreenTarget {
     ///
     /// # What it does
     ///
-    /// Seeds the read half of a `FieldPair` with `seeds`, runs one pass per
-    /// entry of `sdf::jump_flood_steps` — descending
-    /// powers of two from the largest below the longer side down to one — and
-    /// reads the result back. The comparison inside the kernel is in integer
+    /// Seeds the read half of a `FieldPair` with `seeds`, runs one pass per entry
+    /// of `sdf::jump_flood_steps` — descending powers of two from the largest
+    /// below the longer side down to one — and reads the result back, turning it
+    /// into a `SeedMap`. The comparison inside the kernel is in integer
     /// arithmetic, which M8.3a decided by measurement rather than by preference;
     /// `shaders/jump_flood.wgsl`'s header carries the numbers.
     ///
@@ -584,12 +584,20 @@ impl OffscreenTarget {
     ///
     /// # Errors
     ///
-    /// [`RenderError::FieldTexelCount`] cannot occur — the buffer is built from
-    /// the same dimensions the pair is — but is threaded rather than unwrapped,
-    /// because `Seeds` and the pair being one size is an invariant of this
-    /// function and not of the types. [`RenderError::InvalidSize`] if the seed
-    /// set's dimensions are ones a field cannot have, and
-    /// [`RenderError::Readback`] if the copy back to the CPU fails.
+    /// [`RenderError::Readback`] if the copy back to the CPU fails. That is the
+    /// only one of the three this function threads that can actually occur, and
+    /// the other two are named rather than unwrapped:
+    ///
+    /// - [`RenderError::InvalidSize`] **cannot** occur. [`Seeds::new`] rejects a
+    ///   dimension outside `1..=MAX_DIMENSION`, which is the identical condition
+    ///   `Field::new` applies, and `Seeds`' fields are private — so a `Seeds` a
+    ///   caller can hold is always a size a field can be.
+    /// - [`RenderError::FieldTexelCount`] **cannot** occur either: the buffer and
+    ///   the pair are built from the same two numbers.
+    ///
+    /// Both are threaded rather than unwrapped because each is an invariant of
+    /// *this function's* two call sites rather than of the types, so an `expect`
+    /// here would be a claim that the next edit could quietly falsify.
     pub fn distance_field(&self, seeds: &Seeds) -> Result<SeedMap, RenderError> {
         let width = seeds.width();
         let height = seeds.height();
