@@ -881,10 +881,24 @@ impl OffscreenTarget {
     /// One implementation for both entry points above.
     ///
     /// **There is one render path, not two.** The public surface has two doors
-    /// because `render_sprites_viewed_by` has thirteen callers — nine of them in
+    /// because `render_sprites_viewed_by` has many callers — most of them in
     /// tests that draw blessed references — and changing its signature would
     /// have moved those files in the same commit as the seam, which is exactly
     /// the evidence M6.6b's re-export was kept to protect.
+    ///
+    /// **This said "thirteen callers — nine of them in tests" and the number had
+    /// gone stale, which M8.2 found by counting.** At M8.2's gate there were
+    /// **fourteen**; the sentence had been written when there were thirteen and
+    /// nothing recounted it when the fourteenth arrived. M8.2 then removed one —
+    /// `narvo-app`'s `Offscreen::draw` calls [`Self::draw_sprites_over`] now —
+    /// so the count is thirteen again **by coincidence**, which is a worse state
+    /// than being wrong: a number that is right by luck reads exactly like one
+    /// that is right by construction.
+    ///
+    /// So it is a quantifier now rather than a number. Nothing counts these
+    /// callers, and a count nothing checks is a claim waiting to go stale — the
+    /// argument the sentence is making does not need the figure, only that there
+    /// are enough of them for a signature change to be expensive.
     ///
     /// **It draws and does not read back, since M8.2.** The copy moved out to
     /// [`Self::read_back`] so that a caller can encode something between the two
