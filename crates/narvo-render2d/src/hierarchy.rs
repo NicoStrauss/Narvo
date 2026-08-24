@@ -11,9 +11,21 @@
 //!
 //! Level `n` has probe spacing `s·2^n`, interval `[t_n, t_{n+1}]` with
 //! `t_n = f0·(4^n − 1)/3`, and `D_0·4^n` directions. Probes ÷ 4 and directions
-//! × 4 per level, so **the entry count per level is constant** — which is the
-//! whole reason a cascade is affordable, and the reason its cost is `levels ×
-//! (P_0 · D_0)` rather than anything that grows.
+//! × 4 per level, so **the entry count per level is very nearly constant** —
+//! which is the whole reason a cascade is affordable, and the reason its cost is
+//! `levels × (P_0 · D_0)` rather than anything that grows.
+//!
+//! **"Very nearly" was measured in M8.6 and this sentence said "exactly" until
+//! then.** `probe_count` is `floor(extent / spacing) + 1`, and the `+ 1` does not
+//! halve — so a probe grid shrinks by slightly *less* than four while the
+//! directions grow by exactly four, and the entries creep upward with the level.
+//! Over D33's seven-level cascade at 1920 x 1080 that is 16.7 MB at level zero
+//! against 21.0 MB at the top, a 26 % drift
+//! ([`the_binding_ceiling_is_measured_against_one_level_and_not_the_sum`](self)
+//! prints the whole progression). The affordability argument is untouched — a
+//! quarter of a percent per level is not growth — but **the top level is the
+//! largest binding rather than a typical one**, and that is the level
+//! [`Cascade::check_form`] has to be read against.
 //!
 //! Levels are computed **top down**: the top level takes the sky, and every
 //! level below it takes the composed radiance of the level above as what an
@@ -902,6 +914,111 @@ mod tests {
             }
         }
         assert_eq!(reported, 4, "one of the four spacings said nothing at all");
+    }
+
+    /// **What the binding ceiling is actually compared against, which is one
+    /// level and never the sum.**
+    ///
+    /// M8.6 added this because the number was computed by nothing and quoted by
+    /// the plan: D33 prices the directional merge at "124.4 MB against a
+    /// storage-binding ceiling of 134.2 MB — 9.8 MB of air", and those two
+    /// figures are not commensurable. 124.4 MB is the sum over **seven** levels;
+    /// [`MAX_STORAGE_BINDING_BYTES`] is a limit on **one binding**, which is what
+    /// [`Cascade::check_form`] compares and what `cascade_directional` binds. The
+    /// two are exactly D34's own correction — a per-binding limit is not a memory
+    /// limit — applied to D33's headroom figure.
+    ///
+    /// The entry count per level is constant by construction (probes ÷ 4,
+    /// directions × 4), and this asserts that rather than assuming it, so the
+    /// largest level is also the typical one.
+    #[test]
+    fn the_binding_ceiling_is_measured_against_one_level_and_not_the_sum() {
+        let cascade = Cascade::new(
+            CascadeLayout {
+                origin: [0.0, 0.0],
+                base_spacing: 4.0,
+                base_interval: 0.6,
+                base_directions: 8,
+                levels: 7,
+                sky: [0.0, 0.0, 0.0],
+            },
+            1920,
+            1080,
+        )
+        .expect("D33's cascade");
+
+        let budget = cascade.budget(MergeForm::Directional);
+        let largest = budget
+            .levels
+            .iter()
+            .map(|level| level.radiance_bytes)
+            .max()
+            .expect("a cascade has levels");
+
+        eprintln!(
+            "M8.6 binding 1920x1080 spacing 4 directional: sum {:.1} MB over {} levels, \
+             largest single level {:.1} MB, ceiling {:.1} MB, headroom at the binding {:.1} MB",
+            budget.radiance_bytes as f64 / 1e6,
+            budget.levels.len(),
+            largest as f64 / 1e6,
+            MAX_STORAGE_BINDING_BYTES as f64 / 1e6,
+            (MAX_STORAGE_BINDING_BYTES - largest) as f64 / 1e6,
+        );
+
+        // **The entry count per level is not exactly constant, and this is where
+        // that was measured.** The module header says it is, and that is true of
+        // the *ideal* cascade: probes divide by four while directions multiply by
+        // four. This implementation's `probe_count` is `floor(extent / spacing)
+        // + 1`, and the `+ 1` does not halve — so a level's probe grid shrinks by
+        // slightly less than four while its directions grow by exactly four, and
+        // the entries creep upward. The top level is therefore the largest
+        // binding rather than a typical one.
+        for pair in budget.levels.windows(2) {
+            assert!(
+                pair[1].entries >= pair[0].entries,
+                "level {} stores fewer entries than level {}: the drift from the \
+                 `+ 1` in `probe_count` runs upward, so a level below the top can \
+                 never be the largest binding",
+                pair[1].level,
+                pair[0].level
+            );
+            eprintln!(
+                "M8.6 binding   level {}: probes {:?} x {} directions = {} entries, {:.1} MB",
+                pair[0].level,
+                pair[0].probes,
+                pair[0].directions,
+                pair[0].entries,
+                pair[0].radiance_bytes as f64 / 1e6
+            );
+        }
+        assert_eq!(
+            budget
+                .levels
+                .last()
+                .expect("a cascade has levels")
+                .radiance_bytes,
+            largest,
+            "the largest binding is not the top level"
+        );
+
+        // The two numbers D33 compares are not commensurable, and both halves are
+        // asserted so the comparison cannot be read the other way round again: the
+        // sum is several bindings' worth, and the largest single binding clears
+        // the ceiling with room the sum does not suggest.
+        assert!(
+            budget.radiance_bytes > largest * 4,
+            "seven levels did not sum to much more than one of them, so the \
+             distinction this test exists for would not be visible"
+        );
+        assert!(
+            largest * 4 < MAX_STORAGE_BINDING_BYTES,
+            "one level of D33's cascade is within a factor of four of the binding \
+             ceiling, so the headroom reported above is not the comfortable one \
+             this test claims"
+        );
+        cascade
+            .check_form(MergeForm::Directional)
+            .expect("D33's cascade fits the binding it is checked against");
     }
 
     /// The directional form has a ceiling the aggregate form does not.
