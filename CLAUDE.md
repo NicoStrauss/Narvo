@@ -877,6 +877,58 @@ Read the relevant ADRs before any architecture-touching task:
   together. The runtime choice is **unguarded** and that is recorded rather than
   fixed: forcing the window back onto Vulkan leaves 1371 of 1371 green
 
+- `docs/decisions/ADR-0047-the-engine-is-renamed.md` — D30's rename, recorded
+  where it stays findable: **this is the one file in the engine repository where
+  the old name is written on purpose**, so a decision does not become unsearchable
+  the moment the name it replaced leaves everywhere else. Three candidate
+  approaches fell first and the rejections are written down so they do not recur,
+  and the proof that a rename of fourteen crate directories, every manifest, every
+  import and both workflows changed nothing is the twelve unmoved references.
+  **This entry was missing from this list from U3 until M8.2**, the same way
+  ADR-0042's was from M6b.2b until M6b.7, and it is filled in here by the next
+  task that had reason to open this file
+
+- `docs/decisions/ADR-0048-the-offscreen-path-names-its-adapter.md` — ADR-0046
+  settled the window's backend and said in its title that the references keep
+  theirs, which left the offscreen side decided by nobody: `select_adapter`
+  compares no vendor, device or name and returns the first rung that answers, and
+  `offscreen_backends` returned `Backends::default()`, which is `all()` and so
+  carries wgpu's own second tier — `SECONDARY` is exactly `GL`
+  (`wgpu-types-30.0.0/src/backend.rs:132-136`, `:140-144`). Harmless while every
+  reference is an 8-bit image three rasterisers draw with `deviation 0`; an error
+  from the first GI reference, which is a field of `f32`. Two changes and a named
+  third that was **not** made: the set narrows to `PRIMARY`, and `summarize`
+  carries the adapter's `vendor:device`, so a run can *say* what produced it —
+  while selecting by id is refused, because the list would have to be right on
+  every runner and the next machine. GL was the only backend measured to disagree
+  with the others **on the same machine**: it refuses `Rg32Float` as storage where
+  Vulkan and DX12 accept it, and lavapipe's GL refuses `Rgba32Float` as a render
+  attachment where its own Vulkan accepts it. The cost was measured *before* the
+  change and is nil — same adapter on both platforms, screenshot byte-identical at
+  `sha256 f598a3a2…`; the real price is at the edge, where a GL-only machine now
+  gets a loud `NoAdapter` instead of a quiet substitution
+
+- `docs/decisions/ADR-0049-a-chain-is-passes-over-two-fields.md` — the multi-pass
+  compute path M8.3–M8.6 consume, and it is four pieces because each of the four
+  has a named consumer. **A general render graph was rejected** (v1.51): nothing
+  here would exercise its generality, so it would be measured against a toy;
+  reopens at a third consumer with a different pass structure, in practice the
+  first 3D slice. The format is `Rgba32Float` and the usage set has four flags,
+  both measured on eight adapter/backend pairs rather than quoted from the
+  specification — `Rgba8UnormSrgb` carries no `STORAGE_BINDING` at all, `Rg32Float`
+  is refused on both GL adapters, and adding `RENDER_ATTACHMENT` (which no
+  consumer needs) is what makes `Rgba32Float` refused under lavapipe's GL. The
+  rule it exists to state is M8.5's: **a merge may not be written
+  order-dependently** — an atomic CAS reduction was reproducible in **0 of 32**
+  cells while a barrier-and-shared-memory tree and an order-independent control
+  were reproducible in 32 of 32 *and returned one value across every backend,
+  adapter, platform and profile*. The oracle is a pattern with negative channels
+  that no draw path can produce, moved through a kernel written in `+` alone, and
+  three injections were shown red — including one where the arithmetic guards fell
+  while the pass **count stayed green**, which is why both exist. ADR-0039 is
+  amended rather than superseded, on a measurement: after M8.2 a frame still draws
+  exactly two batches, because nothing records a compute pass yet
+
 Decisions that have *not* been made live elsewhere: `ProjektPlan.md` §11 holds
 the D table — the open questions, the recommendation for each, and the milestone
 it is due by. Check it before treating anything as settled. An ADR records a

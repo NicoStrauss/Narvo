@@ -8,7 +8,9 @@
 
 use std::path::Path;
 
+use crate::compute::{self, FieldKernel};
 use crate::error::RenderError;
+use crate::field::{Field, FieldPair};
 use crate::gpu;
 use crate::quad::QuadPipeline;
 use crate::sprite::{
@@ -196,18 +198,48 @@ impl Pixels {
 
 /// The backends the **offscreen** instance asks for, before `WGPU_BACKEND` speaks.
 ///
-/// wgpu's own default set, deliberately unchanged and deliberately *not*
+/// wgpu's **primary** set, and deliberately *not*
 /// [`crate::window::window_backends`]. Every blessed reference in this repository
 /// is produced through this instance, so this is the substrate all twelve of them
 /// live on; M7.1d moved the window off Vulkan on Windows and left this exactly
 /// where it was, which is the entire reason not one of the twelve moved.
+///
+/// **It said `Backends::default()` from M1 until M8.2** — that is, `all()`, which
+/// carries wgpu's second tier as well. M8.2 narrowed it to `PRIMARY` and measured
+/// first that the narrowing moves nothing: the adapter chosen on either platform
+/// is unchanged, so the twelve did not move for this either. ADR-0048 carries the
+/// decision; the body below carries the numbers.
 ///
 /// A function rather than an inline default so that the two choices are two named
 /// things a test can hold apart. What such a test cannot do is stop somebody
 /// editing the call site, so it is joined by one that reads this file's source.
 #[must_use]
 pub(crate) fn offscreen_backends() -> wgpu::Backends {
-    wgpu::Backends::default()
+    // `PRIMARY`, not `default()`. The two are not the same and the difference is
+    // GL: `impl Default for Backends` returns `Self::all()`
+    // (`wgpu-types-30.0.0/src/backend.rs:140-144`), and `Backends::SECONDARY` —
+    // which `all()` includes and `PRIMARY` does not — is exactly `GL`, described
+    // there as "the apis that wgpu offers second tier of support for. These may
+    // be unsupported/still experimental" (`:132-136`).
+    //
+    // **Measured, not inferred.** The M8.2 probe found the GL backend answering
+    // on both platforms this project verifies on — AMD's OpenGL driver on
+    // Windows, llvmpipe under WSL — and behaving differently from the others on
+    // the same machine: it refuses `Rg32Float` as a storage texture where Vulkan
+    // and DX12 accept it, and lavapipe's GL refuses `Rgba32Float` as a render
+    // attachment where its own Vulkan accepts it. A reference produced on GL
+    // would be a reference produced by a rasteriser nothing else here checks
+    // against.
+    //
+    // **It changes nothing today, which was measured before the change**: the
+    // ladder's first rung asks for a high-performance adapter and got
+    // `AMD Radeon RX 9070 XT [Vulkan, DiscreteGpu]` on Windows and
+    // `llvmpipe [Vulkan, Cpu]` under WSL. GL was never being chosen; it was
+    // merely reachable, and "reachable by nobody's decision" is what ADR-0048 is
+    // about.
+    //
+    // `WGPU_BACKEND` still overrides this, through `with_env` at the call site.
+    wgpu::Backends::PRIMARY
 }
 
 /// A GPU render target with no window or surface behind it.
@@ -439,6 +471,121 @@ impl OffscreenTarget {
     #[must_use]
     pub fn adapter_summary(&self) -> &str {
         &self.adapter_summary
+    }
+
+    /// A `width` x `height` [`Field`] on this target's device.
+    ///
+    /// The one way a field comes into being, because a field needs a device and
+    /// this type is what owns one. Nothing about the target's own texture is
+    /// involved: a field is its own allocation, in its own format, and drawing
+    /// into it is not possible on purpose (`field.rs`'s `FIELD_USAGE`).
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] as for [`Self::new`].
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+        )
+    )]
+    pub(crate) fn field(&self, width: u32, height: u32, label: &str) -> Result<Field, RenderError> {
+        Field::new(&self.device, &self.queue, width, height, label)
+    }
+
+    /// Two fields to alternate between, for a chain of passes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::field`].
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+        )
+    )]
+    pub(crate) fn field_pair(
+        &self,
+        width: u32,
+        height: u32,
+        label: &str,
+    ) -> Result<FieldPair, RenderError> {
+        FieldPair::new(&self.device, &self.queue, width, height, label)
+    }
+
+    /// The transport kernel, compiled on this target's device.
+    ///
+    /// M8.2 ships exactly one compute kernel and this is it; M8.3's jump
+    /// flooding is the second, and it arrives beside this one rather than
+    /// through a parameter, because a `&str` of WGSL in a signature would be a
+    /// knob with one setting today and a way to compile arbitrary shaders
+    /// tomorrow.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+        )
+    )]
+    pub(crate) fn transport_kernel(&self) -> FieldKernel {
+        FieldKernel::new(
+            &self.device,
+            &self.queue,
+            "narvo transport",
+            compute::TRANSPORT_WGSL,
+            compute::TRANSPORT_ENTRY,
+        )
+    }
+
+    /// Copies whatever the target currently holds back to the CPU.
+    ///
+    /// **The counterpart to [`WindowTarget::read_back`](crate::WindowTarget::read_back),
+    /// and the point is that the two are now the same shape.** A windowed frame
+    /// is drawn, then optionally copied, then handed over; before M8.2 the
+    /// offscreen path had no such seam — every `render_*` method drew *and*
+    /// copied in one call, so there was no moment between the two in which
+    /// anything else could be encoded. A lighting chain needs exactly that
+    /// moment.
+    ///
+    /// It reads the resolve target, which is the same texture every `render_*`
+    /// method returns pixels from, so calling this straight after one of them
+    /// hands back the identical image.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::Readback`] if the GPU never finishes the copy or the
+    /// transfer buffer cannot be mapped.
+    pub fn read_back(&self) -> Result<Pixels, RenderError> {
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("narvo offscreen read-back"),
+            });
+        self.finish_and_read_back(encoder)
+    }
+
+    /// Draws exactly what [`Self::render_sprites_over`] draws, and reads nothing
+    /// back.
+    ///
+    /// The draw half of the seam above. `render_sprites_over` is this followed by
+    /// [`Self::read_back`] — literally, since M8.2: both go through
+    /// `render_batches`, which now returns after the submit and leaves the copy
+    /// to its caller.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::BatchTooLarge`] if the **sum** of both batches exceeds
+    /// [`MAX_SPRITES_PER_BATCH`].
+    pub fn draw_sprites_over(
+        &self,
+        image: &Pixels,
+        sprites: &[SpriteInstance],
+        overlay: Option<SpriteBatch<'_>>,
+        camera: CameraView,
+    ) -> Result<(), RenderError> {
+        self.render_batches(image, sprites, overlay, camera)
     }
 
     /// Clears the target to `color` and reads the result back as pixels.
@@ -687,7 +834,8 @@ impl OffscreenTarget {
         sprites: &[SpriteInstance],
         camera: CameraView,
     ) -> Result<Pixels, RenderError> {
-        self.render_batches(image, sprites, None, camera)
+        self.render_batches(image, sprites, None, camera)?;
+        self.read_back()
     }
 
     /// The same render with a **second texture's** sprites drawn after the
@@ -726,7 +874,8 @@ impl OffscreenTarget {
         overlay: SpriteBatch<'_>,
         camera: CameraView,
     ) -> Result<Pixels, RenderError> {
-        self.render_batches(image, sprites, Some(overlay), camera)
+        self.render_batches(image, sprites, Some(overlay), camera)?;
+        self.read_back()
     }
 
     /// One implementation for both entry points above.
@@ -736,13 +885,19 @@ impl OffscreenTarget {
     /// tests that draw blessed references — and changing its signature would
     /// have moved those files in the same commit as the seam, which is exactly
     /// the evidence M6.6b's re-export was kept to protect.
+    ///
+    /// **It draws and does not read back, since M8.2.** The copy moved out to
+    /// [`Self::read_back`] so that a caller can encode something between the two
+    /// — which is the whole of what a multi-pass frame is. The two public
+    /// `render_*` doors above call this and then that, in one statement each, so
+    /// what they return is unchanged down to the byte.
     fn render_batches(
         &self,
         image: &Pixels,
         sprites: &[SpriteInstance],
         overlay: Option<SpriteBatch<'_>>,
         camera: CameraView,
-    ) -> Result<Pixels, RenderError> {
+    ) -> Result<(), RenderError> {
         // Emptiness rather than `Option`: a batch with no sprites must be
         // indistinguishable from no batch at all, which is the property
         // `batch_plan` is written around.
@@ -836,7 +991,8 @@ impl OffscreenTarget {
             &runs,
         );
 
-        self.finish_and_read_back(encoder)
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Ok(())
     }
 
     /// Submits `encoder`, copies the target into a transfer buffer and reads it

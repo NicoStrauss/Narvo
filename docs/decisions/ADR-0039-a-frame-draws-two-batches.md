@@ -226,3 +226,36 @@ is unmodified, `quad.rs` is unmodified, and the batch limit is still on the sum.
 It is still two batches and not `n`; `BatchOf` is still where the compiler starts
 asking. ADR-0017's single composition point is untouched — this path **reads** a
 camera and writes none — and ADR-0018 is not involved at all.
+
+## Amendment (M8.2): a second kind of pass exists, and a frame still draws two batches
+
+M8.2 built the multi-pass compute path the M8 lighting slices consume, and its
+brief asked this decision to be either amended or superseded, on the premise that
+"a frame no longer draws two batches."
+
+**It is an amendment, because the premise did not hold in this tree, and that was
+checked rather than assumed.** After M8.2 a frame still draws exactly two batches
+in exactly one render pass. Nothing in `SceneHost`, `Windowed` or `Offscreen`
+records a compute pass; `FieldKernel::run` has no production caller at all, and
+the two new modules carry `expect(dead_code)` naming M8.3's jump flooding as the
+first one. What changed is only that `narvo-render2d` now *can* record work that
+is not a draw.
+
+So every sentence above stands. "Two, not `n`" is a statement about the batch
+list, and the batch list is untouched: `encode_runs` is unmodified, `quad.rs` is
+unmodified, the blend state and `LoadOp::Clear` are unmodified, the limit is still
+on the sum, and an empty second batch still *produces* nothing rather than drawing
+nothing — which is still the regression evidence for the blessed references.
+
+ADR-0049 records what was built, including the format and usage measurements
+behind it and the rule that a merge may not depend on the order invocations run
+in.
+
+**Where the supersession would come from, named so it is not a surprise.** The
+task that first records a compute pass *inside* a frame — M8.6 by the plan — has
+to answer two questions this decision cannot: whether the draw and the chain
+share one command encoder, and whether "a frame" then means the raster pass, the
+whole sequence, or both. That is a decision about the frame's structure rather
+than about the batch list, so it may well need to replace this ADR rather than
+extend it. It is not being pre-empted here, because nothing yet consumes the
+answer.

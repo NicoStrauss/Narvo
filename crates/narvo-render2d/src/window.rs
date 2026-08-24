@@ -1026,7 +1026,8 @@ mod tests {
         );
     }
 
-    /// **The offscreen path does not inherit the window's choice.**
+    /// **The offscreen path names its own backend set, and it is not the
+    /// window's.**
     ///
     /// This is the guard the split actually needs, and it is the one that can
     /// fail on both platforms. Every blessed reference is drawn through
@@ -1035,13 +1036,30 @@ mod tests {
     /// alike — then the twelve references would start being produced on whatever
     /// backend the *window* wants, and no image comparison could notice, because
     /// both sides of every comparison would move together.
+    ///
+    /// **This test was `the_offscreen_path_keeps_wgpus_own_backend_set` until
+    /// M8.2, and the rename is recorded here rather than quietly done.** It
+    /// asserted `Backends::default()`, which M8.2 stopped being true on purpose:
+    /// `default()` is `all()` and so includes `SECONDARY`, which is GL, which the
+    /// M8.2 probe measured behaving differently from Vulkan and DX12 on this very
+    /// machine — `offscreen_backends`' own comment carries the numbers. Keeping
+    /// the old name over the new assertion would have left a test whose name says
+    /// the opposite of its body. **The coverage did not shrink**: both original
+    /// assertions are below, and the GL exclusion is a third.
     #[test]
-    fn the_offscreen_path_keeps_wgpus_own_backend_set() {
+    fn the_offscreen_path_names_its_own_backend_set() {
         assert_eq!(
             offscreen_backends(),
-            Backends::default(),
-            "the offscreen path no longer asks for wgpu's default backends, so \
+            Backends::PRIMARY,
+            "the offscreen path no longer asks for wgpu's primary backends, so \
              the blessed references are drawn on a substrate somebody chose"
+        );
+
+        assert!(
+            !offscreen_backends().contains(Backends::GL),
+            "GL is reachable from the offscreen path again — it is wgpu's own \
+             second tier and the M8.2 probe measured it refusing storage formats \
+             that Vulkan and DX12 accept on the same machine"
         );
 
         if cfg!(target_os = "windows") {

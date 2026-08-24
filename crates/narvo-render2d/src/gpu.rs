@@ -82,10 +82,26 @@ pub(crate) fn create_device(
 }
 
 /// Human-readable description of an adapter and how it came to be chosen.
+///
+/// **Carries the numeric identity since M8.2, and that is the half that was
+/// missing.** `LADDER` selects by power preference and takes the first rung that
+/// answers; no vendor, device or name is compared anywhere in this crate, so the
+/// adapter a run used is decided by whatever the driver stack offered first.
+/// That was harmless while every reference was a picture two rasterisers agree
+/// on to zero counts (`docs/perf/BASELINE.md`). It stops being harmless at the
+/// first global-illumination reference, where the answer is a float field rather
+/// than a byte image — so a run has to be able to *say* which adapter produced
+/// it, in a form that is stable across driver versions and locales.
+///
+/// `vendor` and `device` are the PCI identifiers wgpu reports, printed as four
+/// hex digits each. On the M8.2 probe's machine the discrete part came back as
+/// `0x1002:0x7550` and lavapipe as `0x10005:0x0000` — note that Mesa's software
+/// vendor id is *not* a PCI id and needs five digits, which is why the width is a
+/// minimum rather than a truncation.
 pub(crate) fn summarize(adapter: &wgpu::Adapter, selection: &str) -> String {
     let info = adapter.get_info();
     format!(
-        "{} [{:?}, {:?}] chosen by: {selection}",
-        info.name, info.backend, info.device_type
+        "{} [{:?}, {:?}, {:#06x}:{:#06x}] chosen by: {selection}",
+        info.name, info.backend, info.device_type, info.vendor, info.device
     )
 }

@@ -498,12 +498,28 @@ impl FrameTarget for Windowed {
 /// does, so a frame time measured through this target is not a frame time -
 /// `docs/perf/BASELINE.md` has said so since M3.7. It is here to check that the
 /// loop runs and that the picture is not black, not to be timed.
+///
+/// # The read-back moved out of `draw` in M8.2
+///
+/// Until then `Offscreen::draw` called `render_sprites_over`, which drew *and*
+/// copied in one call, and `capture` handed back the copy that had already
+/// happened. That made this target structurally unlike [`Windowed`], which
+/// draws, may copy, and then presents — three separable moments — and it left no
+/// moment between the draw and the copy in which anything else could be encoded.
+/// A lighting chain is exactly something encoded in that moment (M8.6), so the
+/// two halves are now separate here as well: [`Self::draw`] draws and returns,
+/// and [`Self::capture`] copies.
+///
+/// **[`Self::last_frame`] therefore means something different**, and it is a
+/// method rather than a field now: it reads the target back on demand instead of
+/// handing out a copy taken during the draw. The guard that rested on the old
+/// meaning moved with it — see
+/// `a_capture_is_the_encoded_frame_and_not_the_state_it_is_served_in`, which
+/// says in its own doc what it can and cannot see now.
 #[cfg(test)]
 #[derive(Debug)]
 pub struct Offscreen {
     target: OffscreenTarget,
-    /// The last frame drawn, so a smoke test can look at it.
-    last: Option<Pixels>,
 }
 
 #[cfg(test)]
@@ -511,13 +527,32 @@ impl Offscreen {
     /// A target drawing into `target`.
     #[must_use]
     pub fn new(target: OffscreenTarget) -> Self {
-        Self { target, last: None }
+        Self { target }
     }
 
-    /// The most recently drawn frame, if any frame has been drawn.
+    /// Reads the target back and hands over what is currently in it.
+    ///
+    /// **A read rather than a stored copy, since M8.2.** It costs a GPU
+    /// round trip per call, which is why it is a `#[cfg(test)]` type's method and
+    /// not something a frame loop would use.
+    ///
+    /// `Some` unconditionally: an offscreen target always has contents, even
+    /// before anything was drawn into it — the texture exists from
+    /// `OffscreenTarget::new`. The `Option` is kept because every caller already
+    /// handles it and because the *windowed* answer to the same question really
+    /// can be `None`.
+    ///
+    /// # Panics
+    ///
+    /// If the read-back fails. A test target that cannot be read is a broken
+    /// device rather than a case to handle, and every caller is a test.
     #[must_use]
-    pub fn last_frame(&self) -> Option<&Pixels> {
-        self.last.as_ref()
+    pub fn last_frame(&self) -> Option<Pixels> {
+        Some(
+            self.target
+                .read_back()
+                .expect("an offscreen target this process created can be read back"),
+        )
     }
 }
 
@@ -538,33 +573,23 @@ impl FrameTarget for Offscreen {
         overlay: Option<SpriteBatch<'_>>,
         camera: CameraView,
     ) -> Result<(), RenderError> {
-        // Two doors into one implementation, and the choice is made here rather
-        // than in the renderer: `render_sprites_viewed_by` keeps the signature
-        // its thirteen callers already use, and `render_sprites_over` is the
-        // form that carries a second batch. Both end in `render_batches`.
-        self.last = Some(match overlay {
-            None => self
-                .target
-                .render_sprites_viewed_by(atlas, sprites, camera)?,
-            Some(overlay) => self
-                .target
-                .render_sprites_over(atlas, sprites, overlay, camera)?,
-        });
-        Ok(())
+        // One door, since M8.2: `draw_sprites_over` draws and returns, and the
+        // copy is `capture`'s. `None` and an empty overlay are the same thing to
+        // it, which is `batch_plan`'s property rather than this line's.
+        self.target
+            .draw_sprites_over(atlas, sprites, overlay, camera)
     }
 
     fn capture(&self) -> Result<Option<Pixels>, RenderError> {
-        // The draw already read it back, so there is nothing left to copy. That
-        // is what makes this target the one the capture *wiring* is tested
-        // through: everything above `FrameTarget` - the request, the moment it
-        // is served, what is in the picture - runs unchanged, and only the copy
-        // itself is missing, which is the half `narvo-render2d`'s own tests own.
-        Ok(self.last.clone())
+        // A real copy now, through the same `read_back_texture` the window path
+        // uses. Until M8.2 the draw had already done it and this handed back the
+        // stored result, which made the two targets differently shaped in
+        // exactly the place a multi-pass frame needs them to be alike.
+        self.target.read_back().map(Some)
     }
 
     fn present(&mut self) -> Result<(), RenderError> {
-        // Nothing to present to. The draw above already blocked on the read
-        // back, so the frame is complete by the time this runs.
+        // Nothing to present to.
         Ok(())
     }
 }
@@ -2650,9 +2675,29 @@ mod tests {
     /// existed the axis was held by nothing:
     /// `the_screenshot_is_the_frame_that_was_drawn` says so in its own doc
     /// comment ("Tautological for this target"), and it is — it compares the
-    /// capture with `Offscreen::last_frame`, which is the same field
-    /// `Offscreen::capture` hands back. A capture that re-rendered the scene
-    /// into that same target would move both sides together and pass.
+    /// capture with `Offscreen::last_frame`, which reads the very texture
+    /// `Offscreen::capture` reads. A capture that re-rendered the scene into that
+    /// same target would move both sides together and pass.
+    ///
+    /// # What M8.2 did to the ground under this
+    ///
+    /// **`Offscreen::last_frame` changed meaning and this guard moved with it
+    /// rather than quietly losing its object.** It used to hand back a `Pixels`
+    /// the *draw* had already copied out; since M8.2 the draw copies nothing and
+    /// `last_frame` reads the target on demand — the same read `capture` performs
+    /// (§5(b) of the M8.2 brief, and `Offscreen`'s own header).
+    ///
+    /// The discriminator is unchanged and so is the verdict, because neither ever
+    /// rested on *when* the copy happened. It rests on the copy being taken from
+    /// a texture nothing re-drew: `encoded` is read straight after `encode`, the
+    /// world is then moved, and `captured` is read after `present`. Two reads of
+    /// an untouched texture are equal; a re-render between them is not.
+    ///
+    /// What did change is in this guard's favour. Before M8.2 `capture` returned
+    /// a clone of a buffer already on the CPU, so the copy this test judges had
+    /// happened one phase earlier than the moment it is about. Now the copy
+    /// happens where a window's does — after the encode, before the handover —
+    /// so the shape being checked is the shape that ships.
     ///
     /// # Why moving the world is the discriminator
     ///
@@ -2706,11 +2751,7 @@ mod tests {
             "this target always has somewhere to draw"
         );
         host.encode().expect("encoding cannot fail");
-        let encoded = host
-            .target()
-            .last_frame()
-            .cloned()
-            .expect("the encode drew a frame");
+        let encoded = host.target().last_frame().expect("the encode drew a frame");
 
         // Everything a second render would read now says B.
         for _ in 0..MOVED_TICKS {
@@ -2782,7 +2823,6 @@ mod tests {
         let unasked = host
             .target()
             .last_frame()
-            .cloned()
             .expect("the first frame was drawn");
         assert!(
             host.take_capture().is_none(),
@@ -2795,7 +2835,6 @@ mod tests {
         let asked = host
             .target()
             .last_frame()
-            .cloned()
             .expect("the second frame was drawn");
         let captured = host.take_capture().expect("the request was served");
 

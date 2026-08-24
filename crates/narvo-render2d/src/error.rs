@@ -103,6 +103,23 @@ pub enum RenderError {
     /// configuration time, which would cost the window rather than the
     /// screenshot — and a read-back reports this instead.
     SurfaceNotReadable,
+    /// A buffer of field texels is not as long as the field's size requires.
+    ///
+    /// Separate from [`RenderError::PixelBufferSize`] rather than folded into
+    /// it: that one counts RGBA8 *bytes* and this one counts `f32` *channels*,
+    /// so one message would have to say "expected 64" about two different units.
+    /// Error messages are agent feedback (CLAUDE.md), and a unit a reader has to
+    /// infer is the part that costs a session.
+    FieldTexelCount {
+        /// Width of the field the buffer was offered to.
+        width: u32,
+        /// Height of that field.
+        height: u32,
+        /// Floats those dimensions require, four per texel.
+        expected: usize,
+        /// Floats actually supplied.
+        actual: usize,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -140,6 +157,15 @@ impl fmt::Display for RenderError {
             } => write!(
                 f,
                 "a {width}x{height} RGBA8 image needs {expected} bytes but {actual} were given"
+            ),
+            Self::FieldTexelCount {
+                width,
+                height,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "a {width}x{height} field needs {expected} floats, four per texel, but {actual} were given"
             ),
             Self::NoAdapter { attempts } => write!(
                 f,
@@ -198,6 +224,7 @@ impl Error for RenderError {
             Self::InvalidSize { .. }
             | Self::BatchTooLarge { .. }
             | Self::PixelBufferSize { .. }
+            | Self::FieldTexelCount { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
             | Self::NoAdapter { .. } => None,

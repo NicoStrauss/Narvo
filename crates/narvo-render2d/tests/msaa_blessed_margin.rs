@@ -842,8 +842,20 @@ fn batch_corners(sprites: &[Placed], texture: &Pixels, projection: Projection) -
 /// `soft_edge_margin.rs` gives: it makes the adapter string comparable with the
 /// rows already in `BASELINE.md`.
 fn device_or_skip() -> Option<(wgpu::Device, wgpu::Queue, String)> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    // The same backend set the production offscreen instance asks for.
+    //
+    // It was `new_without_display_handle_from_env()` — wgpu's default set, which
+    // is `all()` — until M8.2 narrowed production to `PRIMARY` (ADR-0048). This
+    // file exists to reproduce the production pipeline and compare the two
+    // outputs, so a wider set here would let this side land on a backend
+    // production cannot use, and the adapter assertion below would start failing
+    // for a reason that is not a defect. `offscreen_backends()` itself is
+    // `pub(crate)` and out of reach from an integration test, so the set is
+    // written out; the assertion on the adapter summary is what holds the two
+    // together.
+    let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+    descriptor.backends = wgpu::Backends::PRIMARY;
+    let instance = wgpu::Instance::new(descriptor.with_env());
 
     let ladder = [
         (
@@ -870,8 +882,8 @@ fn device_or_skip() -> Option<(wgpu::Device, wgpu::Queue, String)> {
             Ok(adapter) => {
                 let info = adapter.get_info();
                 let summary = format!(
-                    "{} [{:?}, {:?}] chosen by: {label}",
-                    info.name, info.backend, info.device_type
+                    "{} [{:?}, {:?}, {:#06x}:{:#06x}] chosen by: {label}",
+                    info.name, info.backend, info.device_type, info.vendor, info.device
                 );
                 let (device, queue) =
                     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

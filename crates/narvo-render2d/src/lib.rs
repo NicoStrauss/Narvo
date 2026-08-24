@@ -18,8 +18,44 @@
 //! anywhere in its dependency tree — that is what makes the headless rule in
 //! CLAUDE.md checkable with `cargo tree` rather than by reading the source.
 
+/// Compute passes over fields, and the chain that runs several of them.
+///
+/// The crate's first compute path (M8.2). Private like every other module here;
+/// its consumers — M8.3's jump flooding, M8.4's ray march, M8.5's cascades and
+/// M8.6's write-back — are all inside this crate, so nothing is exported until
+/// something outside needs it.
+///
+/// **In a non-test build nothing calls into it yet, and the attribute says so
+/// rather than the module being quietly gated.** M8.2 builds the multi-pass
+/// machinery; the first production caller is M8.3's jump flooding. `expect`
+/// rather than `allow`, for the reason `narvo-app`'s `SceneHost::registry`
+/// records: an expectation that stops being needed becomes an
+/// unfulfilled-lint warning and this workspace denies warnings, so **the day
+/// M8.3 lands a caller the compiler forces this attribute out**. `not(test)`
+/// because the tests inside the module do call it.
+#[cfg(feature = "gpu")]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+    )
+)]
+mod compute;
 #[cfg(feature = "gpu")]
 mod error;
+/// The buffer a compute pass reads and the one it writes.
+///
+/// Carries the same `expect(dead_code)` as [`compute`] and for the same reason.
+#[cfg(feature = "gpu")]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the multi-pass machinery precedes its first caller: M8.3's jump flooding"
+    )
+)]
+mod field;
 /// The M3.34 glyph atlas, and the single-line layout that consumes it.
 ///
 /// **Public modules, where every other module in this crate is private and
