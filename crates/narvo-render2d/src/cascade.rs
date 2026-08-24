@@ -167,6 +167,22 @@ impl Emission {
     pub(crate) fn texels(&self) -> &[f32] {
         &self.texels
     }
+
+    /// Wraps a field the GPU wrote, in the same four-channel layout.
+    ///
+    /// **The one construction path that does not go through [`Emission::set`],
+    /// and so the one that is not range-checked.** M8.6's surface cache reads its
+    /// bounced field back through here, and that field is `albedo * radiance`
+    /// with both factors non-negative — so the property `set` enforces holds by
+    /// construction rather than by inspection. It is `pub(crate)` for exactly
+    /// that reason: a caller outside this crate has no such argument available.
+    pub(crate) fn from_texels(width: u32, height: u32, texels: Vec<f32>) -> Self {
+        Self {
+            width,
+            height,
+            texels,
+        }
+    }
 }
 
 /// Where a stage's probes are, how far they look, and in how many directions.

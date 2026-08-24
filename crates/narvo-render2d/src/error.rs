@@ -263,6 +263,48 @@ pub enum RenderError {
         /// The most one binding holds.
         limit: u64,
     },
+    /// An albedo map is not the same size as the seed set beside it.
+    ///
+    /// Separate from [`RenderError::EmissionSizeMismatch`] rather than sharing
+    /// it, for [`RenderError::EmissionOutsideField`]'s reason: the two are the
+    /// same arithmetic about two different maps, and a surface cache takes both,
+    /// so a message naming the wrong one would send a reader to the wrong
+    /// argument of the same call.
+    AlbedoSizeMismatch {
+        /// Width of the seed set.
+        seed_width: u32,
+        /// Height of the seed set.
+        seed_height: u32,
+        /// Width of the albedo map.
+        albedo_width: u32,
+        /// Height of the albedo map.
+        albedo_height: u32,
+    },
+    /// An albedo value was placed outside the map it belongs to.
+    AlbedoOutsideField {
+        /// Column the value was placed at.
+        x: u32,
+        /// Row the value was placed at.
+        y: u32,
+        /// Width of the map it was placed in.
+        width: u32,
+        /// Height of that map.
+        height: u32,
+    },
+    /// A surface cache was asked for a probe grid it cannot index in integers.
+    ///
+    /// The write-back turns a texel coordinate into the index of the probe
+    /// nearest it, and ADR-0050 says a comparison over coordinates is written in
+    /// integers. That reasoning reaches an *index* over coordinates as well, so
+    /// the level-zero origin and spacing have to be whole texels — which is a
+    /// restriction on the cascade rather than on the cache, and is refused here
+    /// because this is the first place that needs it.
+    ProbeGridNotIntegral {
+        /// Which number is unusable, spelled as the caller wrote it.
+        name: &'static str,
+        /// The value that was offered.
+        value: f32,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -416,6 +458,35 @@ impl fmt::Display for RenderError {
                  spacing, fewer levels, or the aggregate merge, which keeps one texel \
                  per probe instead of one per direction"
             ),
+            Self::AlbedoSizeMismatch {
+                seed_width,
+                seed_height,
+                albedo_width,
+                albedo_height,
+            } => write!(
+                f,
+                "an albedo map of {albedo_width}x{albedo_height} does not fit the \
+                 seed set of {seed_width}x{seed_height} beside it: the two are \
+                 indexed by one coordinate, so a map of another size is a confusion \
+                 rather than a shortfall and is refused rather than padded"
+            ),
+            Self::AlbedoOutsideField {
+                x,
+                y,
+                width,
+                height,
+            } => write!(
+                f,
+                "an albedo value at ({x}, {y}) lies outside the {width}x{height} map \
+                 it was placed in"
+            ),
+            Self::ProbeGridNotIntegral { name, value } => write!(
+                f,
+                "a surface cache needs {name} to be a whole number of texels, and \
+                 {value} is not: the write-back finds the probe nearest a texel by \
+                 integer arithmetic, which ADR-0050 is the reason for. Give the \
+                 cascade an integral origin and spacing"
+            ),
             Self::NoAdapter { attempts } => write!(
                 f,
                 "no GPU adapter available; tried {attempts}. On a headless machine, \
@@ -484,6 +555,9 @@ impl Error for RenderError {
             | Self::EmissionSizeMismatch { .. }
             | Self::ProbeOutsideField { .. }
             | Self::EmissionOutsideField { .. }
+            | Self::AlbedoSizeMismatch { .. }
+            | Self::AlbedoOutsideField { .. }
+            | Self::ProbeGridNotIntegral { .. }
             | Self::CascadeLevelTooLarge { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }

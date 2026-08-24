@@ -21,6 +21,7 @@ use crate::sprite::{
     BatchOf, CameraView, MAX_SPRITES_PER_BATCH, Projection, SpriteBatch, SpriteFilter,
     SpriteInstance, SpritePlacement, batch_plan, batch_vertices,
 };
+use crate::surface::{self, Albedo, BounceKernel, SurfaceCache};
 
 /// Format of every render target this crate creates.
 ///
@@ -828,14 +829,45 @@ impl OffscreenTarget {
         let pair = self.flood(seeds)?;
         let emitter = self.field(width, height, "narvo cascade emission")?;
         emitter.write(emission.texels())?;
-        let march = MarchKernel::new(&self.device, &self.queue);
 
+        let base = self.cascade_into_field(cascade, pair.read(), &emitter, form, width, height)?;
+        let layout = cascade
+            .level(0)
+            .expect("a cascade has at least one level")
+            .layout();
+        Ok(RadianceField::from_texels(
+            layout.probes[0],
+            layout.probes[1],
+            base.read_back()?,
+        ))
+    }
+
+    /// Runs a whole cascade and leaves level zero's radiance on the GPU.
+    ///
+    /// **M8.6's split, and the same shape M8.5b gave `CascadeKernel::run`.** A
+    /// surface cache feeds level zero's radiance straight back into an emission
+    /// field, so bringing it to the CPU in between would pay a round trip per
+    /// frame for nothing. [`Self::cascade`] is this plus one read-back.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cascade`], minus the size checks its callers have already made.
+    fn cascade_into_field(
+        &self,
+        cascade: &Cascade,
+        field: &Field,
+        emitter: &Field,
+        form: MergeForm,
+        width: u32,
+        height: u32,
+    ) -> Result<Field, RenderError> {
+        let march = MarchKernel::new(&self.device, &self.queue);
         match form {
             MergeForm::Aggregate => {
-                self.cascade_aggregate(cascade, pair.read(), &emitter, &march, width, height)
+                self.cascade_aggregate(cascade, field, emitter, &march, width, height)
             }
             MergeForm::Directional => {
-                self.cascade_directional(cascade, pair.read(), &emitter, &march, width, height)
+                self.cascade_directional(cascade, field, emitter, &march, width, height)
             }
         }
     }
@@ -849,7 +881,7 @@ impl OffscreenTarget {
         march: &MarchKernel,
         width: u32,
         height: u32,
-    ) -> Result<RadianceField, RenderError> {
+    ) -> Result<Field, RenderError> {
         let kernel = CascadeKernel::new(&self.device, &self.queue);
         let mut upper: Option<Field> = None;
         for level in (0..cascade.level_count()).rev() {
@@ -873,16 +905,12 @@ impl OffscreenTarget {
                 bound,
                 upper.is_some(),
             )?;
-            let layout = stage.layout();
             if level == 0 {
-                // Only level zero crosses to the CPU. Every level above it is
-                // read by the level below, on the GPU, which is the whole reason
-                // `run_into_field` exists.
-                return Ok(RadianceField::from_texels(
-                    layout.probes[0],
-                    layout.probes[1],
-                    composed.read_back()?,
-                ));
+                // Only level zero leaves this loop. Every level above it is read
+                // by the level below, on the GPU, which is the whole reason
+                // `run_into_field` exists — and since M8.6 level zero does not
+                // necessarily leave the GPU either.
+                return Ok(composed);
             }
             upper = Some(composed);
         }
@@ -898,7 +926,7 @@ impl OffscreenTarget {
         march: &MarchKernel,
         width: u32,
         height: u32,
-    ) -> Result<RadianceField, RenderError> {
+    ) -> Result<Field, RenderError> {
         let kernel = DirectionalKernel::new(&self.device, &self.queue);
         let mut upper: Option<wgpu::Buffer> = None;
         for level in (0..cascade.level_count()).rev() {
@@ -953,15 +981,130 @@ impl OffscreenTarget {
                 stage.probe_count(),
             );
             if level == 0 {
-                return Ok(RadianceField::from_texels(
-                    layout.probes[0],
-                    layout.probes[1],
-                    mean.read_back()?,
-                ));
+                return Ok(mean);
             }
             upper = Some(outgoing);
         }
         unreachable!("a cascade has at least one level, so level zero was reached")
+    }
+
+    /// Builds a surface cache: a world's lighting state between two frames.
+    ///
+    /// **M8.6's capability, and Lumen's surface cache in two dimensions.** The
+    /// cascade answers how much light reaches each probe; the cache multiplies
+    /// that by [`Albedo`] and writes it back as emission, so the next frame's
+    /// march finds a wall that is itself a lamp. A second bounce therefore costs
+    /// one frame of latency rather than a second cascade, which is the whole of
+    /// what "spread over time" buys.
+    ///
+    /// `emission` is the **direct** light an author wrote and never changes. What
+    /// changes is the bounced field, which starts at zero — so the first
+    /// [`Self::bounce`] returns exactly what [`Self::cascade`] would, and a cache
+    /// that has never stepped is not a different renderer.
+    ///
+    /// # What it costs, and what it does once
+    ///
+    /// The distance field is **flooded once, here**, and every frame marches
+    /// against it. That is the per-frame cost a cache exists to remove, and it is
+    /// also the assumption it makes: a cache is valid while its occluders stand
+    /// still. When they move, build another — ADR-0022's reconstitution reasoning
+    /// arriving in the lighting path, and cheaper to state than an invalidation
+    /// protocol nothing yet needs.
+    ///
+    /// Five fields of `width x height` are held for the cache's lifetime — the
+    /// distance field, the direct emission, the albedo, the bounced field and the
+    /// combined emission — plus whatever one frame of cascade allocates. At
+    /// `Rgba32Float` that is 80 bytes a texel, and `SurfaceCache`'s header carries
+    /// the rest.
+    ///
+    /// # Errors
+    ///
+    /// - [`RenderError::EmissionSizeMismatch`] or
+    ///   [`RenderError::AlbedoSizeMismatch`] if either map is not the seed set's
+    ///   size. The three are indexed by one coordinate, so a mismatch is a
+    ///   confusion rather than a shortfall and is refused rather than padded.
+    /// - [`RenderError::InvalidSize`] if the cascade was validated against a field
+    ///   of another size.
+    /// - [`RenderError::ProbeGridNotIntegral`] if level zero's probe origin or
+    ///   spacing is not a whole number of texels — `shaders/bounce.wgsl` says why
+    ///   that is ADR-0050's reasoning reaching an index.
+    /// - [`RenderError::CascadeLevelTooLarge`] if the chosen merge does not fit
+    ///   one storage buffer binding.
+    /// - [`RenderError::FieldTexelCount`] is threaded and cannot occur: every
+    ///   buffer and every field here is built from the same two numbers.
+    pub fn surface_cache(
+        &self,
+        seeds: &Seeds,
+        emission: &Emission,
+        albedo: &Albedo,
+        cascade: &Cascade,
+        form: MergeForm,
+    ) -> Result<SurfaceCache, RenderError> {
+        let (width, height) = (seeds.width(), seeds.height());
+        let grid = surface::plan([width, height], emission, albedo, cascade, form)?;
+
+        let pair = self.flood(seeds)?;
+        let direct = self.field(width, height, "narvo surface direct")?;
+        direct.write(emission.texels())?;
+        let reflectance = self.field(width, height, "narvo surface albedo")?;
+        reflectance.write(albedo.texels())?;
+        // Both start at zero, which `Field::new` guarantees, so the first frame
+        // combines `direct + 0` and marches exactly what a bare cascade would.
+        let bounced = self.field(width, height, "narvo surface bounced")?;
+        let combined = self.field(width, height, "narvo surface emission")?;
+
+        Ok(surface::assemble(
+            pair.into_read(),
+            direct,
+            reflectance,
+            bounced,
+            combined,
+            cascade.clone(),
+            form,
+            grid,
+        ))
+    }
+
+    /// Advances a surface cache by one frame and returns level zero's radiance.
+    ///
+    /// Three steps, in this order: combine the direct light with what bounced
+    /// last frame, run the cascade against that, and multiply the result by the
+    /// albedo to become what bounces next frame. The radiance handed back is the
+    /// **middle** step's — the light as it is this frame, not what it will become
+    /// — so `bounce` is a frame of lighting and not a frame of prediction.
+    ///
+    /// # Why the multiply and the add are two dispatches
+    ///
+    /// Because `direct + albedo * radiance` in one expression is one inexact
+    /// float product feeding a float add, which is the shape ADR-0051 forbids and
+    /// the shape M8.5a measured splitting the eight adapter/backend pairs into two
+    /// fields. A texel store between the two forces the intermediate to be rounded
+    /// and written, so no backend can see them as one expression.
+    /// `shaders/bounce.wgsl` carries the argument.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] and [`RenderError::Readback`] as
+    /// [`Self::cascade`]. Every size was settled when the cache was built, so the
+    /// first is threaded rather than reachable.
+    pub fn bounce(&self, cache: &mut SurfaceCache) -> Result<RadianceField, RenderError> {
+        let kernel = BounceKernel::new(&self.device, &self.queue);
+        let grid = cache.grid;
+
+        kernel.combine(&cache.direct, &cache.bounced, &cache.emission, &grid);
+        let radiance = self.cascade_into_field(
+            &cache.cascade,
+            &cache.field,
+            &cache.emission,
+            cache.form,
+            grid.width,
+            grid.height,
+        )?;
+        kernel.reflect(&cache.albedo, &radiance, &cache.bounced, &grid);
+
+        cache.advanced();
+        let texels = radiance.read_back()?;
+        Ok(cache.radiance_of(texels))
     }
 
     /// Copies whatever the target currently holds back to the CPU.

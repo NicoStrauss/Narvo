@@ -127,6 +127,16 @@ mod sprite;
 /// predicting a stored byte has the same right to it as a windowed one. Its own
 /// header carries the rest, including why it left `narvo-testkit` in M7.0.
 pub mod srgb;
+/// Radiance written back as emission, and the colour that follows from it.
+///
+/// **M8.6's capability, and the reason M8.5b's cascade exists.** Its consumers
+/// are M8.7's temporal accumulation, which needs a cache it can carry across a
+/// frame boundary, and M8.8's game light. Re-exported flat like every other
+/// module here, so `Albedo` and `SurfaceCache` read as
+/// `narvo_render2d::SurfaceCache` — two names that say what they are without
+/// their module in front of them.
+#[cfg(feature = "gpu")]
+mod surface;
 #[cfg(feature = "gpu")]
 pub mod text;
 #[cfg(feature = "gpu")]
@@ -156,6 +166,8 @@ pub use crate::sprite::{
     RegionEdge, ScreenAnchor, SpriteBatch, SpriteFilter, SpriteInstance, SpritePlacement,
     SpriteTint, TextureRegion, batch_plan, batch_runs, check_region_padding,
 };
+#[cfg(feature = "gpu")]
+pub use crate::surface::{Albedo, SurfaceCache};
 #[cfg(feature = "gpu")]
 pub use crate::window::{FrameOutcome, FrameStart, PresentPolicy, SurfaceFrame, WindowTarget};
 

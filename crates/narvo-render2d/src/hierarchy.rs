@@ -87,16 +87,43 @@ pub const MAX_STORAGE_BINDING_BYTES: u64 = 128 << 20;
 
 /// Which of the two merges a cascade runs.
 ///
-/// **Both are built and neither is preferred.** The difference between them is
-/// what M8.5b measures; the choice between them is a plan decision.
+/// **M8.5b built both and preferred neither, because the choice was a plan
+/// decision and had not been taken. D33 has since taken it: the directional
+/// merge**, and [`MergeForm::default`] is where that now lives, so a caller who
+/// does not have an opinion gets the decided answer rather than whichever variant
+/// happens to be written first.
+///
+/// The reason is a product argument and not a technical one, and it is recorded
+/// here because a decision that lives only in a plan is a decision the next
+/// reader has to be told about by somebody: M9's mechanic is that a player in the
+/// dark is safe and an enemy in the dark is invulnerable, and the aggregate merge
+/// lets **18 to 49 %** of a wall's light through the wall. That is not a tuning
+/// parameter, it is the mechanic failing structurally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeForm {
     /// One radiance per probe. A level's escaping directions all take the same
     /// value from the level above, so the direction is thrown away.
+    ///
+    /// **Kept rather than removed, and the reason is a test.** D33 rejected it in
+    /// full strength — it is 44 to 47 times cheaper and shares a kernel with the
+    /// single stage — so keeping it is not indecision. What keeps it is that the
+    /// comparison establishing the difference needs both forms to exist:
+    /// `cascade_hierarchy.rs` measures the leak through a wall and the excess over
+    /// one all-encompassing interval by running the two side by side, and a
+    /// measurement with one arm deleted is an assertion.
     Aggregate,
     /// One radiance per probe **per direction**. An escaping direction takes the
     /// radiance of the four upper directions covering the same arc.
+    ///
+    /// **The default (D33).**
     Directional,
+}
+
+impl Default for MergeForm {
+    /// [`MergeForm::Directional`], which is D33's decision.
+    fn default() -> Self {
+        Self::Directional
+    }
 }
 
 /// What a cascade is, before it has been checked against a field.

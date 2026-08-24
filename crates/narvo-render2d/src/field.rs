@@ -379,6 +379,20 @@ impl FieldPair {
         &self.fields[1 - self.front]
     }
 
+    /// Takes the field the next pass would read, dropping the other.
+    ///
+    /// **M8.6's addition, and the one thing a flooded pair is for once the
+    /// flooding is over.** A surface cache holds its distance field for its whole
+    /// life and never writes to it again, so keeping the pair would keep a second
+    /// full-size texture alive for nothing — 33.2 MB of it at 1920 x 1080. It
+    /// consumes the pair rather than borrowing from it, because a pair that has
+    /// given its read half away cannot be swapped again without the two halves
+    /// disagreeing about which is which.
+    pub(crate) fn into_read(self) -> Field {
+        let [a, b] = self.fields;
+        if self.front == 0 { a } else { b }
+    }
+
     /// Makes what was written the thing the next pass reads.
     ///
     /// Called once per pass by [`crate::compute::FieldKernel::run`], between the
