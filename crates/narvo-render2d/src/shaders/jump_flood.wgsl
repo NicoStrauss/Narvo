@@ -22,8 +22,8 @@
 //     squared distance of 2^24 upward. The measured witness is a field 8192
 //     texels wide — which is exactly `OffscreenTarget::MAX_DIMENSION` — with two
 //     seeds one row apart: the first wrong texel is at x = 4096 on all eight
-//     pairs, and 3248 or 4096 of the 8192 texels in that row keep the farther
-//     seed. The `i32` form is wrong in none of them.
+//     pairs, and 3248 or 4096 of its 16 384 texels keep the farther seed. The
+//     `i32` form is wrong in none of them.
 //   - Worse, the `f32` form is wrong *differently on different machines*: the
 //     three AMD paths (Vulkan, DX12, GL) report 3248 and the three software
 //     rasterisers (WARP on DX12, llvmpipe on Vulkan and GL) report 4096. One
