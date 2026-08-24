@@ -136,6 +136,29 @@ pub enum RenderError {
         /// Height of that field.
         height: u32,
     },
+    /// A ray endpoint is outside the field it would be marched against.
+    ///
+    /// Refused rather than clamped. `march.wgsl` clamps a position to the field
+    /// as defence, and M8.3b measured that a clamp at a field edge can mask an
+    /// off-by-one — so the refusal here is the guard and the clamp is not asked
+    /// to be one.
+    RayOutsideField {
+        /// Column the endpoint sits at, in field texels.
+        x: f32,
+        /// Row the endpoint sits at, in field texels.
+        y: f32,
+        /// Width of the field it would be marched against.
+        width: u32,
+        /// Height of that field.
+        height: u32,
+    },
+    /// A ray endpoint is not a finite number.
+    ///
+    /// Separate from [`RenderError::RayOutsideField`], which can name a
+    /// coordinate and a bound. A `NaN` compares false against every bound, so
+    /// folding the two would produce a message claiming `NaN` is outside a range
+    /// it is merely incomparable with.
+    RayNotFinite,
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -192,6 +215,22 @@ impl fmt::Display for RenderError {
                 f,
                 "a seed at ({x}, {y}) is outside a {width}x{height} field: \
                  columns run 0..{width} and rows 0..{height}"
+            ),
+            Self::RayOutsideField {
+                x,
+                y,
+                width,
+                height,
+            } => write!(
+                f,
+                "a ray endpoint at ({x}, {y}) is outside a {width}x{height} field: \
+                 both ends of a march must lie within 0..={width} by 0..={height}, \
+                 because the field says nothing about what is beyond its edge"
+            ),
+            Self::RayNotFinite => write!(
+                f,
+                "a ray endpoint is not a finite number, so it has no position in \
+                 the field at all"
             ),
             Self::NoAdapter { attempts } => write!(
                 f,
@@ -252,6 +291,8 @@ impl Error for RenderError {
             | Self::PixelBufferSize { .. }
             | Self::FieldTexelCount { .. }
             | Self::SeedOutsideField { .. }
+            | Self::RayOutsideField { .. }
+            | Self::RayNotFinite
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
             | Self::NoAdapter { .. } => None,

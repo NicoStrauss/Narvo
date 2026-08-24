@@ -77,6 +77,13 @@ pub mod glyph_atlas;
 mod golden;
 #[cfg(feature = "gpu")]
 mod gpu;
+/// The circle march: how far a ray gets before it meets an occluder.
+///
+/// M8.4's capability, and the first thing in this crate that reads the field
+/// **without bringing it to the CPU**. Its consumers are M8.5's cascade, which
+/// marches a probe's rays, and M8.8's game light.
+#[cfg(feature = "gpu")]
+mod march;
 #[cfg(feature = "gpu")]
 mod offscreen;
 #[cfg(feature = "gpu")]
@@ -114,8 +121,9 @@ pub use crate::golden::{
     Golden, GoldenError, GoldenReport, MismatchDetails, Tolerance, WorstPixel, golden_artifact_dir,
 };
 #[cfg(feature = "gpu")]
-pub use crate::offscreen::{ClearColor, OffscreenTarget, Pixels};
+pub use crate::march::{MarchHit, MarchVerdict, Ray};
 #[cfg(feature = "gpu")]
+pub use crate::offscreen::{ClearColor, OffscreenTarget, Pixels};
 pub use crate::sdf::{SeedMap, Seeds};
 #[cfg(feature = "gpu")]
 pub use crate::sprite::{

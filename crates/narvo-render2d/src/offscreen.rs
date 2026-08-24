@@ -12,6 +12,7 @@ use crate::compute::{self, FieldKernel};
 use crate::error::RenderError;
 use crate::field::{Field, FieldPair};
 use crate::gpu;
+use crate::march::{MarchHit, MarchKernel, Ray, derived_budget};
 use crate::quad::QuadPipeline;
 use crate::sdf::{self, SeedMap, Seeds};
 use crate::sprite::{
@@ -599,6 +600,21 @@ impl OffscreenTarget {
     /// *this function's* two call sites rather than of the types, so an `expect`
     /// here would be a claim that the next edit could quietly falsify.
     pub fn distance_field(&self, seeds: &Seeds) -> Result<SeedMap, RenderError> {
+        let pair = self.flood(seeds)?;
+        Ok(SeedMap::from_texels(
+            seeds.width(),
+            seeds.height(),
+            &pair.read().read_back()?,
+        ))
+    }
+
+    /// Seeds a field pair and floods it, leaving the answer on the GPU.
+    ///
+    /// The half [`Self::distance_field`] and [`Self::march`] share. It is
+    /// private because a `FieldPair` is a `wgpu` resource and this crate's
+    /// boundary says none crosses out — which is also why `march` exists at all
+    /// rather than a caller being handed a field to march itself.
+    fn flood(&self, seeds: &Seeds) -> Result<FieldPair, RenderError> {
         let width = seeds.width();
         let height = seeds.height();
         let mut pair = self.field_pair(width, height, "narvo distance field")?;
@@ -613,12 +629,58 @@ impl OffscreenTarget {
         );
         let steps = sdf::jump_flood_steps(width, height);
         kernel.run(&mut pair, &steps)?;
+        Ok(pair)
+    }
 
-        Ok(SeedMap::from_texels(
-            width,
-            height,
-            &pair.read().read_back()?,
-        ))
+    /// Marches every ray in `rays` against the field `seeds` describes.
+    ///
+    /// **The field never comes to the CPU.** M8.4 measured `distance_field`'s
+    /// phases and found the eleven flooding passes to be 0.29 ms of 21.2 ms at
+    /// 1920 x 1080 while uploading, reading back and rebuilding the field cost
+    /// 16.9 ms — so a march that runs where the field already is pays none of
+    /// that, and what crosses back is sixteen bytes a ray. `march.rs`'s header
+    /// carries the table.
+    ///
+    /// The step budget is [derived](Ray::derived_budget) from the rays: a step is
+    /// either zero, which ends the march, or at least one fixed-point unit, so no
+    /// ray can take more steps than its own length in those units. A caller that
+    /// wants to spend less asks [`Self::march_within`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::march_within`].
+    pub fn march(&self, seeds: &Seeds, rays: &[Ray]) -> Result<Vec<MarchHit>, RenderError> {
+        self.march_within(seeds, rays, derived_budget(rays))
+    }
+
+    /// [`Self::march`] with a step budget of the caller's choosing.
+    ///
+    /// A ray that runs out reports [`MarchVerdict::Exhausted`](crate::MarchVerdict::Exhausted),
+    /// which is **not** visible: a march that stopped early has not established a
+    /// line of sight, and saying otherwise would be claiming something it never
+    /// checked.
+    ///
+    /// The consumer is M8.5's cascade, which marches a probe's rays by the
+    /// million and will want to bound the work; the budget is not a knob with one
+    /// setting, because M8.4's own exhaustion oracle is the other caller.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] if the seed set's dimensions are ones a field
+    /// cannot have, and [`RenderError::Readback`] if the answers cannot be copied
+    /// back. A ray is validated when it is built, not here.
+    pub fn march_within(
+        &self,
+        seeds: &Seeds,
+        rays: &[Ray],
+        budget: u32,
+    ) -> Result<Vec<MarchHit>, RenderError> {
+        if rays.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pair = self.flood(seeds)?;
+        let kernel = MarchKernel::new(&self.device, &self.queue);
+        kernel.run(pair.read(), rays, budget)
     }
 
     /// Copies whatever the target currently holds back to the CPU.
