@@ -233,8 +233,8 @@ fn a_machine_written_scene_warns_through_the_tool() {
     // rather than a hand-made imitation of it.
     let registry = {
         use narvo_ecs::{
-            Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, RigidBody, Rng, Sampling,
-            Shake, Sprite, Tally, Tint, Transform,
+            Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
+            Sampling, Shake, Sprite, Tally, Tint, Transform,
         };
         let mut registry = ComponentRegistry::new();
         for result in [
@@ -247,6 +247,7 @@ fn a_machine_written_scene_warns_through_the_tool() {
             registry.register_component::<Shake>("shake"),
             registry.register_component::<Rng>("rng"),
             registry.register_component::<Sprite>("sprite"),
+            registry.register_component::<Occluder>("occluder"),
             registry.register_component::<HitRect>("hitrect"),
             registry.register_component::<Tally>("tally"),
             registry.register_component::<RigidBody>("rigidbody"),
@@ -325,8 +326,8 @@ fn a_machine_written_scene_warns_through_the_tool() {
 #[test]
 fn the_transcribed_census_is_the_engine_s_own_set() {
     use narvo_ecs::{
-        Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, RigidBody, Rng, Sampling, Shake,
-        Sprite, Tally, Tint, Transform,
+        Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
+        Sampling, Shake, Sprite, Tally, Tint, Transform,
     };
 
     let mut transcribed = ComponentRegistry::new();
@@ -340,6 +341,7 @@ fn the_transcribed_census_is_the_engine_s_own_set() {
         transcribed.register_component::<Shake>("shake"),
         transcribed.register_component::<Rng>("rng"),
         transcribed.register_component::<Sprite>("sprite"),
+        transcribed.register_component::<Occluder>("occluder"),
         transcribed.register_component::<HitRect>("hitrect"),
         transcribed.register_component::<Tally>("tally"),
         transcribed.register_component::<RigidBody>("rigidbody"),

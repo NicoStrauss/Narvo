@@ -1,0 +1,81 @@
+// The occluder scene: what a world stores when it stores something that blocks
+// light.
+//
+// M8.3b's content. Occluders are a registered component, so what is written
+// below goes into the canonical dump, into ADR-0008's state hash, into an
+// ADR-0043 save, and across the agent protocol — and a replay reproduces it.
+// That is the whole point of the type existing rather than a light being
+// assembled at draw time from whatever happened to be on screen.
+//
+// Run it headless and look at what a wall is:
+//
+//   narvo --headless --scene crates/narvo-app/scenes/occluders.ron \
+//          --ticks 1 --dump
+//
+//   occluder (half_width:1.0,half_height:6.0)
+//
+// Two numbers. The position comes from the `transform` beside it, which is the
+// same arrangement `hitrect` uses and for the same reason: the component is a
+// shape, and where a thing is belongs to the thing.
+//
+// # Why this scene exists rather than an occluder being added to an older one
+//
+// Adding one to `click_counter.ron` or `burst.ron` would have moved that
+// scene's state hash, and those hashes are other tasks' evidence. M8.3b
+// pre-registered all eight as unmoved and this file is how that promise was
+// kept: a new scene produces a ninth hash and disturbs no existing one.
+//
+// # What is deliberately not here
+//
+// **No light.** Nothing in this scene is lit, and nothing in the engine lights
+// it yet: M8.4 marches a ray against the distance field these occluders seed,
+// M8.5 merges cascades and M8.6 writes the result back. A scene that pretended
+// to be lit would be describing a capability that does not exist.
+//
+// **No assets.** No `sprite` names a region, so this scene needs no `assets/`
+// directory and runs headless exactly as it stands. `click_counter.ron`'s header
+// explains why a scene that *does* name regions cannot open a window from this
+// repository (ADR-0024 forbids committing the PNGs); this one sidesteps that by
+// having nothing to draw. It is content for a simulation, not for a picture.
+Scene(
+    entities: [
+        // A wall: tall, thin, left of centre. The shape a light has to get
+        // around, and the reason `half_width` and `half_height` are separate
+        // numbers rather than one radius.
+        (
+            name: "wall",
+            components: {
+                "transform": (x: -6.0, y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "occluder": (half_width: 1.0, half_height: 6.0),
+            },
+        ),
+
+        // A pillar: square, right of centre, and small enough that the gap
+        // between it and the wall is wider than either. Two separated occluders
+        // are what makes the extraction's union do something a single rectangle
+        // would not — with one blocker, an order-dependent extraction would look
+        // perfectly deterministic.
+        (
+            name: "pillar",
+            components: {
+                "transform": (x: 5.0, y: 2.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "occluder": (half_width: 2.0, half_height: 2.0),
+            },
+        ),
+
+        // A crate that is both clickable and solid, carrying `hitrect` and
+        // `occluder` together with **different extents**. That is the case the
+        // two types exist separately for: it can be picked up over its whole
+        // sprite and blocks light only over its body. A single merged type could
+        // not say it.
+        (
+            name: "crate",
+            components: {
+                "transform": (x: 0.0, y: -4.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "hitrect": (half_width: 3.0, half_height: 3.0, action: "take", value: 1),
+                "occluder": (half_width: 1.5, half_height: 1.5),
+                "tally": (action: "take", count: 0),
+            },
+        ),
+    ],
+)

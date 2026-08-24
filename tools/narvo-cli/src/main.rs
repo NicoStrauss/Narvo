@@ -229,6 +229,7 @@ mod tests {
                 "follow",
                 "hitrect",
                 "layer",
+                "occluder",
                 "rigidbody",
                 "rng",
                 "sampling",

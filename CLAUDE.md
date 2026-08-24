@@ -929,6 +929,25 @@ Read the relevant ADRs before any architecture-touching task:
   amended rather than superseded, on a measurement: after M8.2 a frame still draws
   exactly two batches, because nothing records a compute pass yet
 
+- `docs/decisions/ADR-0050-a-comparison-over-coordinates-is-written-in-integers.md`
+  — M8.3a measured this and **reported it rather than writing it**, on its brief's
+  instruction; M8.3b wrote it, which is why it carries a later date than the
+  measurement it records. A comparison over coordinates is written in `i32`, and
+  the decision is the *bound* rather than the reasoning: M8.2's magnitude defence
+  of `f32` is correct at M8.2's sizes and at every size the tests use — six of
+  seven arrangements were **byte-identical under both variants** — and it breaks
+  at `MAX_DIMENSION`, which is a limit this crate publishes. Measured over 448
+  chain executions: `f32` names the wrong seed from a squared distance of 2^24 up
+  (first wrong texel at x = 4096 on all eight adapter/backend pairs) and, worse,
+  is wrong **differently per rasteriser family** — 3 248 texels on the three AMD
+  paths against 4 096 on the three software ones, one input and two fields —
+  while `i32` returned one field in 16 of 16 cells. Its guard **has to be a source
+  read**, and that shape follows from the same measurement rather than from taste:
+  no output comparison can see the difference below the magnitude at which `f32`
+  stops being exact. M8.3b showed it red against an `f32` injection and **14 of
+  the 15 tests, every GPU oracle among them, stayed green**. Reopens at a value
+  that cannot be an integer, which is M8.5's radiance
+
 Decisions that have *not* been made live elsewhere: `ProjektPlan.md` §11 holds
 the D table — the open questions, the recommendation for each, and the milestone
 it is due by. Check it before treating anything as settled. An ADR records a

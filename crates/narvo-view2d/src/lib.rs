@@ -52,10 +52,12 @@
 
 mod atlas;
 mod hit;
+mod occluder;
 mod sprite_batch;
 
 pub use crate::atlas::{AssetsError, SceneAtlas, load_for};
 pub use crate::hit::{depth_order, hit_test};
+pub use crate::occluder::seeds_of;
 pub use crate::sprite_batch::{
     Drawn, DrawnRegion, camera_of, placements_of, region_names_of, regions_of,
 };

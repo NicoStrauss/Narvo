@@ -94,6 +94,25 @@ Scene(
                 // storage, and the rule lives in `narvo-input`, which the
                 // format crate does not depend on.
                 "hitrect": (half_width: 16.0, half_height: 16.0, action: "select", value: 1),
+                // What blocks light (M8.3b). The rectangle is axis-parallel and
+                // measured in world units from the transform's position, exactly
+                // as `hitrect` above is - the two share a geometry and not a
+                // meaning, so an entity may carry either, both, or neither with
+                // different extents. This one is smaller than the hit area,
+                // which is the ordinary case: a figure is clickable over its
+                // whole sprite and blocks light only where it is solid.
+                //
+                // **This entry is here because a guard demands it, not because
+                // the format does**, the same way `tint` and `burst` below are.
+                // An entity without an `occluder` blocks nothing and every scene
+                // that predates the type hashes exactly as it did;
+                // `the_specimen_uses_every_registered_component` requires the
+                // specimen to carry every registered type at least once, so a
+                // type that stopped round-tripping would show up here.
+                //
+                // Two bare floats, ADR-0014's rule, the same one `sampling`,
+                // `rigidbody` and `tint` give.
+                "occluder": (half_width: 8.0, half_height: 12.0),
                 // How many of that action have arrived (M5.5). The counter is
                 // world state, so a click that increments it is reproducible
                 // from a recording; the system that increments it lives in

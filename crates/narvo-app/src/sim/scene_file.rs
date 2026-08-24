@@ -692,7 +692,7 @@ mod tests {
     fn the_whole_engine_component_set_is_registered() {
         let simulation = build(MOVING).expect("loads");
 
-        assert_eq!(simulation.registry.len(), 14);
+        assert_eq!(simulation.registry.len(), 15);
         assert!(canonical_dump(&simulation.world, &simulation.registry).is_ok());
     }
 

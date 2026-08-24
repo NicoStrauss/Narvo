@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use narvo_ecs::{
-    Burst, Camera, ComponentRegistry, EntityId, Follow, HitRect, Layer, RigidBody, Rng, Sampling,
-    Shake, Sprite, Tally, Tint, Transform, World, canonical_dump, first_difference,
+    Burst, Camera, ComponentRegistry, EntityId, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
+    Sampling, Shake, Sprite, Tally, Tint, Transform, World, canonical_dump, first_difference,
 };
 use narvo_scene::SceneError;
 use proptest::prelude::*;
@@ -64,6 +64,9 @@ fn registry() -> ComponentRegistry {
         .expect("a fresh registry accepts this component");
     registry
         .register_component::<Sprite>("sprite")
+        .expect("a fresh registry accepts this component");
+    registry
+        .register_component::<Occluder>("occluder")
         .expect("a fresh registry accepts this component");
     registry
         .register_component::<HitRect>("hitrect")
@@ -209,6 +212,9 @@ fn reference_world() -> World {
         .expect("the entity was just spawned");
     world
         .insert(player, HitRect::new(16.0, 16.0, "select", 1))
+        .expect("a fresh entity takes a component");
+    world
+        .insert(player, Occluder::new(8.0, 12.0))
         .expect("a fresh entity takes a component");
     world
         .insert(player, Tally::new("select"))
