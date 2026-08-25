@@ -656,6 +656,76 @@ impl RadianceField {
         &self.texels
     }
 
+    /// A `width` x `height` grid in which every probe is dark and owes nothing.
+    ///
+    /// **This type was output-only until M8.7**, because nothing consumed a
+    /// radiance field: a cascade produced one and a caller read it. An
+    /// [`Accumulator`](crate::Accumulator) *takes* one per frame, so a caller
+    /// outside this crate has to be able to build one — and an oracle has to be
+    /// able to build one that no cascade would produce, which is the same
+    /// argument [`Field::write`](crate::field::Field::write) makes one level down
+    /// and the reason [`Emission`] and [`Albedo`](crate::Albedo) are plain data.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::InvalidSize`] if a dimension is zero or above
+    /// [`OffscreenTarget::MAX_DIMENSION`](crate::OffscreenTarget::MAX_DIMENSION).
+    pub fn new(width: u32, height: u32) -> Result<Self, RenderError> {
+        let max = crate::OffscreenTarget::MAX_DIMENSION;
+        if width == 0 || height == 0 || width > max || height > max {
+            return Err(RenderError::InvalidSize { width, height, max });
+        }
+        Ok(Self {
+            width,
+            height,
+            texels: vec![0.0; width as usize * height as usize * FIELD_CHANNELS],
+        })
+    }
+
+    /// Sets what probe `(x, y)` carries and how much of it the level above owes.
+    ///
+    /// **`escaped` is a fourth argument rather than a second method**, because the
+    /// two are one probe's answer: a radiance without the share it still owes is
+    /// half a value, and a setter that could leave the two inconsistent is a
+    /// defect waiting to be written. [`Self::escaped`] says what the share means.
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError::RadianceOutsideGrid`] if the probe is outside the grid, and
+    /// [`RenderError::StageParameter`] if a channel is not finite or is negative,
+    /// or if the escaped share is not a finite number between zero and one.
+    pub fn set(&mut self, x: u32, y: u32, rgb: [f32; 3], escaped: f32) -> Result<(), RenderError> {
+        let Some(base) = self.base(x, y) else {
+            return Err(RenderError::RadianceOutsideGrid {
+                x,
+                y,
+                width: self.width,
+                height: self.height,
+            });
+        };
+        for value in rgb {
+            if !value.is_finite() || value < 0.0 {
+                return Err(RenderError::StageParameter {
+                    name: "a radiance channel",
+                    value,
+                    requirement: "be a finite number that is not negative",
+                });
+            }
+        }
+        if !escaped.is_finite() || !(0.0..=1.0).contains(&escaped) {
+            return Err(RenderError::StageParameter {
+                name: "an escaped share",
+                value: escaped,
+                requirement: "be a finite number between zero and one",
+            });
+        }
+        self.texels[base] = rgb[0];
+        self.texels[base + 1] = rgb[1];
+        self.texels[base + 2] = rgb[2];
+        self.texels[base + 3] = escaped;
+        Ok(())
+    }
+
     fn base(&self, x: u32, y: u32) -> Option<usize> {
         if x >= self.width || y >= self.height {
             return None;

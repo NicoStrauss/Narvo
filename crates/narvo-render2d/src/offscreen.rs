@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use crate::accumulate::{self, AccumulateKernel, Accumulator, Blend, Motion, Resample};
 use crate::cascade::{CascadeKernel, CascadeStage, Emission, RadianceField};
 use crate::compute::{self, FieldKernel};
 use crate::error::RenderError;
@@ -1105,6 +1106,97 @@ impl OffscreenTarget {
         cache.advanced();
         let texels = radiance.read_back()?;
         Ok(cache.radiance_of(texels))
+    }
+
+    /// Builds an accumulator over one cascade stage's probe grid.
+    ///
+    /// **M8.7's capability.** The stage is what the accumulated field is *over*:
+    /// its probe count is the grid, and its spacing is what turns a motion in
+    /// field texels into an offset in probes. Level zero is the one a surface
+    /// cache hands back, so `cascade.level(0)` is the usual argument.
+    ///
+    /// The accumulator starts with no history, so its first frame returns that
+    /// frame's own field exactly rather than a fraction of it.
+    ///
+    /// # Errors
+    ///
+    /// - [`RenderError::StageParameter`] if the stage's spacing is not a positive
+    ///   finite number. Everything else about a stage was checked when it was
+    ///   built, which is what [`CascadeStage::new`] exists for.
+    /// - [`RenderError::InvalidSize`] if the probe grid is empty or larger than
+    ///   [`Self::MAX_DIMENSION`].
+    pub fn accumulator(
+        &self,
+        stage: &CascadeStage,
+        blend: Blend,
+        resample: Resample,
+    ) -> Result<Accumulator, RenderError> {
+        let (probes, spacing) = accumulate::plan(stage)?;
+        let [width, height] = probes;
+        Ok(accumulate::assemble(
+            self.field_pair(width, height, "narvo accumulated")?,
+            self.field(width, height, "narvo reprojected")?,
+            self.field(width, height, "narvo accumulate fresh")?,
+            probes,
+            spacing,
+            blend,
+            resample,
+        ))
+    }
+
+    /// Advances an accumulator by one frame and returns the accumulated field.
+    ///
+    /// Two steps, in this order: resample the previous field into this frame's
+    /// grid, and mix the fresh field into it. `motion` is how far the content
+    /// moved across the field since the previous call —
+    /// [`Motion::STILL`] when it did not move at all, which is the case in which
+    /// the reprojection is the identity byte for byte.
+    ///
+    /// # Why the resample and the blend are two dispatches
+    ///
+    /// M8.6's reason, unchanged: a texel store between them, so neither pipeline
+    /// is ever handed a texture it also writes. Here it buys a second thing —
+    /// the reprojection writes the **fresh** value where there is no history, so
+    /// the blend computes `f + (f - f) / d` at exactly those probes and needs no
+    /// branch of its own. `shaders/accumulate.wgsl` carries the argument.
+    ///
+    /// # Errors
+    ///
+    /// - [`RenderError::RadianceGridMismatch`] if `fresh` is not the
+    ///   accumulator's probe grid.
+    /// - [`RenderError::MotionOutOfRange`] if the motion cannot be expressed as a
+    ///   fixed-point offset — see the error's own text for what to do instead.
+    /// - [`RenderError::FieldTexelCount`] is threaded and cannot occur once the
+    ///   grid matches.
+    /// - [`RenderError::Readback`] if the accumulated field cannot be copied back.
+    pub fn accumulate(
+        &self,
+        accumulator: &mut Accumulator,
+        fresh: &RadianceField,
+        motion: Motion,
+    ) -> Result<RadianceField, RenderError> {
+        accumulator.check_grid(fresh)?;
+        let params = accumulator.params(motion)?;
+        accumulator.fresh.write(fresh.texels())?;
+
+        let kernel = AccumulateKernel::new(&self.device, &self.queue);
+        kernel.reproject(
+            accumulator.resample(),
+            accumulator.history.read(),
+            &accumulator.fresh,
+            &accumulator.reprojected,
+            &params,
+        );
+        kernel.blend(
+            &accumulator.reprojected,
+            &accumulator.fresh,
+            accumulator.history.write(),
+            &params,
+        );
+
+        accumulator.advanced();
+        let texels = accumulator.history.read().read_back()?;
+        Ok(accumulator.field_of(texels))
     }
 
     /// Copies whatever the target currently holds back to the CPU.

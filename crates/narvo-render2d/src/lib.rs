@@ -18,6 +18,19 @@
 //! anywhere in its dependency tree — that is what makes the headless rule in
 //! CLAUDE.md checkable with `cargo tree` rather than by reading the source.
 
+/// Reprojection and the temporal blend: one frame's field carried into the
+/// next.
+///
+/// **M8.7's capability, and the first thing in this crate that accumulates.**
+/// M8.6's feedback has no running sum in it — the geometric series lives in the
+/// cascade rather than in an accumulator — so this is the only place in the
+/// lighting path where a value can creep. Its consumers are M8.8's game light,
+/// which is what wants a field that is quiet between frames, and M8.9's closing
+/// probe. Re-exported flat like every other module here, so `Accumulator`,
+/// `Blend`, `Motion` and `Resample` read as `narvo_render2d::Accumulator` — four
+/// names that say what they are without their module in front of them.
+#[cfg(feature = "gpu")]
+mod accumulate;
 /// One cascade stage: probes, their intervals, their directions, and the
 /// radiance they integrate.
 ///
@@ -142,6 +155,8 @@ pub mod text;
 #[cfg(feature = "gpu")]
 mod window;
 
+#[cfg(feature = "gpu")]
+pub use crate::accumulate::{Accumulator, Blend, Motion, Resample};
 #[cfg(feature = "gpu")]
 pub use crate::cascade::{CascadeStage, Emission, RadianceField, StageLayout};
 #[cfg(feature = "gpu")]

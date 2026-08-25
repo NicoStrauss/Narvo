@@ -305,6 +305,68 @@ pub enum RenderError {
         /// The value that was offered.
         value: f32,
     },
+    /// A radiance value was placed outside the probe grid it belongs to.
+    ///
+    /// Separate from [`RenderError::EmissionOutsideField`] and
+    /// [`RenderError::AlbedoOutsideField`] rather than sharing one of them, for
+    /// the reason those two are separate from each other: the arithmetic is the
+    /// same and the thing it is about is not, and a message saying "an emission
+    /// value" about a probe sends a reader to the wrong call. A probe grid is not
+    /// even the same size as a field — it is the field divided by the spacing.
+    RadianceOutsideGrid {
+        /// Column the value was placed at, in probes.
+        x: u32,
+        /// Row the value was placed at, in probes.
+        y: u32,
+        /// Probes across in the grid it was placed in.
+        width: u32,
+        /// Probes down in that grid.
+        height: u32,
+    },
+    /// A temporal blend was asked for a share that is not a reciprocal power of
+    /// two.
+    ///
+    /// ADR-0051's rule, arriving as a refusal rather than as a comment. The
+    /// accumulation divides by this number, and a division by a power of two is
+    /// exact where a general one is not — which is the whole of what keeps a run
+    /// of accumulated frames byte-identical across adapters.
+    BlendNotPowerOfTwo {
+        /// The divisor that was offered.
+        divisor: u32,
+    },
+    /// A reprojection was handed a motion it cannot express as a fixed-point
+    /// offset.
+    ///
+    /// The offset is `i32`, sixteen bits of it fraction, so a motion above the
+    /// whole field's width in one frame has nowhere to go. Refused rather than
+    /// clamped: a clamp would reproject *something*, and a motion that large means
+    /// the previous frame is not the same picture at all —
+    /// [`Accumulator::forget`](crate::Accumulator::forget) is what that case wants.
+    MotionOutOfRange {
+        /// Which axis is unusable, spelled as the caller wrote it.
+        name: &'static str,
+        /// The motion that was offered, in field texels.
+        value: f32,
+        /// The same motion in probes, which is the number the bound is on. `NaN`
+        /// when the motion itself was not a finite number.
+        probes: f64,
+    },
+    /// An accumulator was handed a radiance field that is not its probe grid.
+    ///
+    /// Separate from [`RenderError::EmissionSizeMismatch`] because the two shapes
+    /// are different things: an emission map is indexed by field texels and a
+    /// radiance field by probes, and an error naming the wrong one sends a caller
+    /// to the wrong number.
+    RadianceGridMismatch {
+        /// Probes across in the accumulator's grid.
+        grid_width: u32,
+        /// Probes down in the accumulator's grid.
+        grid_height: u32,
+        /// Probes across in the field that was offered.
+        field_width: u32,
+        /// Probes down in that field.
+        field_height: u32,
+    },
     /// A texture's format is not one whose bytes are four RGBA8 channels.
     UnreadableFormat {
         /// The format that was found, as `wgpu` spells it.
@@ -487,6 +549,48 @@ impl fmt::Display for RenderError {
                  integer arithmetic, which ADR-0050 is the reason for. Give the \
                  cascade an integral origin and spacing"
             ),
+            Self::RadianceOutsideGrid {
+                x,
+                y,
+                width,
+                height,
+            } => write!(
+                f,
+                "a radiance value at probe ({x}, {y}) lies outside the \
+                 {width}x{height} probe grid it was placed in. A probe grid is the \
+                 field divided by the stage's spacing, so it is smaller than the \
+                 field it covers"
+            ),
+            Self::BlendNotPowerOfTwo { divisor } => write!(
+                f,
+                "a temporal blend gives a fresh frame one share in {divisor}, and \
+                 {divisor} is not a power of two between 1 and 8388608. The \
+                 accumulation divides by it, and only a power of two divides exactly \
+                 — ADR-0051 measured what an inexact weight costs across adapters"
+            ),
+            Self::MotionOutOfRange {
+                name,
+                value,
+                probes,
+            } => write!(
+                f,
+                "a reprojection cannot express {name} of {value} texels, which is \
+                 {probes} probes: the offset is fixed point in an i32 and tops out at \
+                 8192 probes. A motion that large means the previous frame is not the \
+                 same picture, so forget the history instead of reprojecting it"
+            ),
+            Self::RadianceGridMismatch {
+                grid_width,
+                grid_height,
+                field_width,
+                field_height,
+            } => write!(
+                f,
+                "an accumulator over a {grid_width}x{grid_height} probe grid was \
+                 handed a {field_width}x{field_height} radiance field. The two are \
+                 indexed by the same probe coordinate, so a field of another shape is \
+                 a confusion rather than a shortfall"
+            ),
             Self::NoAdapter { attempts } => write!(
                 f,
                 "no GPU adapter available; tried {attempts}. On a headless machine, \
@@ -558,6 +662,10 @@ impl Error for RenderError {
             | Self::AlbedoSizeMismatch { .. }
             | Self::AlbedoOutsideField { .. }
             | Self::ProbeGridNotIntegral { .. }
+            | Self::RadianceOutsideGrid { .. }
+            | Self::BlendNotPowerOfTwo { .. }
+            | Self::MotionOutOfRange { .. }
+            | Self::RadianceGridMismatch { .. }
             | Self::CascadeLevelTooLarge { .. }
             | Self::SurfaceNotReadable
             | Self::UnreadableFormat { .. }
