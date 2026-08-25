@@ -2896,7 +2896,7 @@ mod tests {
             canonical_dump(&bench.simulation.world, &bench.simulation.registry).is_ok(),
             "the loaded world cannot be dumped, so the registry did not travel with it"
         );
-        assert_eq!(bench.simulation.registry.len(), 15);
+        assert_eq!(bench.simulation.registry.len(), 17);
     }
 
     /// **A scene load cuts the band exactly where a `set` would**, which is S2's

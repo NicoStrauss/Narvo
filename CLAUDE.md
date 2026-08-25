@@ -69,6 +69,64 @@ evidence:
 The shape is the same both times: a query returning something that looks like
 data and is not. It costs nothing to read a workflow result twice.
 
+**`gh api` has both halves of that shape, and PowerShell decides which one you
+get.** Measured in M8.8 against `gh` 2.97.0, four forms of one query:
+
+| form | result |
+|---|---|
+| `--jq '.workflow_runs[] \| {name, conclusion}'` (single-quoted) | works |
+| `--jq ".workflow_runs[] \| {name, conclusion}"` (double-quoted) | works |
+| unquoted, **with** a `\|` | **PowerShell parser error** — `Ausdrücke sind nur als erstes Element einer Pipeline zulässig` |
+| unquoted, **without** a `\|` | **`accepts 1 arg(s), received 3`** |
+
+The last two are the same mistake — PowerShell splits the jq expression and
+`gh` receives its words as positional arguments — and they fail differently only
+by accident of whether a `|` is present. **Both are the good case**, because
+both are loud. **Quote the `--jq` expression**, single quotes for preference so
+that a `$` inside it is not interpolated.
+
+The bad case is the one beside it and it is the family this section is about:
+
+```
+gh api "repos/<owner>/<repo>/actions/runs?head_sha=$(git rev-parse HEAD)" \
+  --jq '.workflow_runs[] | {name, status, conclusion, html_url}'
+```
+
+`head_sha` needs the **full** SHA, exactly as `gh run list --commit` does. Given
+a short one this returns `"total_count": 0` and **exit 0** — indistinguishable
+from a commit that genuinely has no run. Measured both ways on one commit in
+M8.8: full SHA `1`, short SHA `0`, no error either time. `git rev-parse HEAD` in
+the command above is not decoration; it is what stops the short form being
+typed.
+
+**`git push` can be refused by the session rather than by git, and the two look
+nothing alike.** Measured in M8.7 and reproduced in M8.8. The refusal comes from
+the harness's permission classifier *before the command runs*, so:
+
+- it begins `Permission for this action was denied by the Claude Code auto mode
+  classifier` and carries `Blocked by classifier`;
+- there is **no git output at all** — no `remote:`, no `error: failed to push
+  some refs`, no `Everything up-to-date`, and no exit code from git, because git
+  was never started;
+- **nothing was sent.** The commit exists locally and the remote is untouched.
+
+Do not debug it as a git or a network fault, and do not retry it. The correct
+response is the one M8.7 took: **leave the CI section of the report empty rather
+than green.** A commit that was never pushed has no run, and a CI verdict
+inferred from a green local run is exactly the "looks like data and is not"
+shape this section is about. Say the push was refused, say by what, and hand the
+commit over for a human to push.
+
+**A pipe hides an exit code, and that is how a red verification run reported
+green.** In M8.8 `cargo xtask ci 2>&1 | tail -30` was read as passing because
+the shell reports the *last* command's status and `tail` always succeeds; the
+run had in fact stopped in the whitespace prelude. Write the output to a file
+and read `$?`, or set `pipefail` — never judge a step by what a pipeline printed:
+
+```
+cargo xtask ci > target/ci.log 2>&1; echo "EXIT=$?"
+```
+
 **`cargo deny check` is green about the tree it can see, which is not always the
 tree you changed.** Third instance of the same class, found in M5.6b. A
 dependency that is declared `optional` and whose feature nothing activates is
@@ -972,6 +1030,34 @@ Read the relevant ADRs before any architecture-touching task:
   tight against the 0.140 a contracted field shows — while **zero** components
   differ once quantised to an 8-bit channel. The guard is a source read for
   ADR-0050's reason, and it was shown red
+
+- `docs/decisions/ADR-0052-a-reprojection-is-a-gather-and-not-an-interpolation.md`
+  — M8.7 measured this decision and **reported it rather than writing it**, on
+  its brief's instruction; M8.8 §4 wrote it, which is the third time this pattern
+  has run (ADR-0050 was the first) and why it carries a later date than the
+  measurement it records. A reprojection over continuous motion is a **gather**:
+  nearest neighbour, an integer index in and a texel out, no arithmetic performed
+  on a radiance value. The decider is the steppiness table, and it says three
+  things of which only the first was expected — at a motion of nothing both arms
+  are **exact** (`0.000e0`, sharpness `1.0000`); neither arm wins on error
+  (nearest 0.16–0.67 of a probe-gradient, bilinear 0.29–0.62, the ratio swinging
+  0.53 to 2.49); and **bilinear destroys the field**, retaining 0.40–0.62 of its
+  spatial detail against nearest's 0.75–1.00, because an interpolation applied to
+  its own output every frame blurs cumulatively while a gather cannot blur. The
+  exact arm returns **one field on all eight adapter/backend pairs** at every
+  divisor in both profiles where bilinear returns three, and the divisor-of-one
+  row is the control that puts the divergence in the resample rather than the
+  blend. **The arrears are what make it affordable**, and they came from a
+  defect the measurement found rather than from tidiness: a per-frame offset of
+  0.10 probes rounds to nothing every frame, so the stored field never moves at
+  all while the scene slides underneath it — carrying the remainder bounds the
+  error at **half a probe forever**. The rejected bilinear arm stays in the tree
+  with its own reason, because a measurement with one arm deleted is an
+  assertion. The consequence M8.8 leans on is that an accumulated field can be
+  compared **byte for byte**; the price it pays is that same half a probe, which
+  M8.8 measured as **55.6 %** of its composed bound once a camera moves.
+  ADR-0051 is untouched and its amendment is still owed to M8.5b's composition
+  split — §2 expected to supply it and did not, because the exact regime survives
 
 Decisions that have *not* been made live elsewhere: `ProjektPlan.md` §11 holds
 the D table — the open questions, the recommendation for each, and the milestone

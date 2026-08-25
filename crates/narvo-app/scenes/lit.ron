@@ -1,0 +1,138 @@
+// The lit scene: what a world stores when light decides something.
+//
+// M8.8's content, and the counterpart to `occluders.ron`. That scene says what
+// a wall is; this one says what a wall *does* — it carries the same kind of
+// blockers plus a lamp and three entities that care how lit they are.
+//
+// Run it headless and look at what the tick computed:
+//
+//   narvo --headless --scene crates/narvo-app/scenes/lit.ron --ticks 1 --dump
+//
+//   lit (level:0.0)          <- the guard, squarely behind the wall: 0 of 3 rays
+//   lit (level:0.23170465)   <- the watcher, in the open:            3 of 3
+//   lit (level:0.21447723)   <- the sentry, in the penumbra:         2 of 3
+//   lit (level:0.11187196)   <- the scout, deeper in:                1 of 3
+//
+// The watcher and the sentry read *nearly the same number* for opposite
+// reasons — the watcher is further away and fully lit, the sentry is nearer and
+// two-thirds lit — which is a property worth having in a fixture: a defect that
+// confused visibility with distance would have to move both, and moving both
+// the same way is much harder than moving one.
+//
+// The numbers are computed by `illuminate` from the `lightsource` and the two
+// `occluder`s below, every tick, on the CPU, with no GPU anywhere near it. They
+// go into the canonical dump, into ADR-0008's state hash, into an ADR-0043 save
+// and across the agent protocol, and a replay reproduces them — which is the
+// whole difference between a light that decides and a light that is a picture.
+//
+// # Why this scene exists rather than a light being added to an older one
+//
+// Adding one to `occluders.ron` would have moved that scene's state hash, and
+// that hash is M8.3b's evidence. M8.3b made the same decision one task earlier
+// for the same reason — it declined to touch `click_counter.ron` or
+// `burst.ron` — and this file is how the promise is kept twice: a new scene
+// produces a tenth hash and disturbs none of the nine before it.
+//
+// # The four receivers are the fan's four possible answers
+//
+// A three-ray fan can report 0, 1/3, 2/3 or 3/3 of a source, and this scene
+// places a receiver at each: guard, scout, sentry, watcher. That is deliberate
+// rather than decorative. A scene holding only the extremes would be reproduced
+// exactly by a light with **one** ray and no penumbra at all, so it could not
+// tell a working fan from a hard shadow; holding both middle steps, it can also
+// tell a three-ray fan from a two-ray one.
+//
+// The crate is a fifth receiver and a different case: it carries an `occluder`
+// and a `lit` together with different extents, which is what would be
+// permanently dark if an entity's own occluder shadowed it.
+//
+// **No assets and no sprite**, so this scene needs no `assets/` directory and
+// runs headless exactly as it stands — `occluders.ron`'s header explains why.
+Scene(
+    entities: [
+        // The lamp. `range` is how far it reaches, `intensity` how bright it is
+        // at the source, and `radius` its own half-width across the line of
+        // sight — which is what makes its shadows soft, since the fan of rays
+        // is spread across it.
+        (
+            name: "lamp",
+            components: {
+                "transform": (x: -8.0, y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "lightsource": (range: 24.0, intensity: 1.0, radius: 0.75),
+            },
+        ),
+
+        // A wall between the lamp and most of the room.
+        (
+            name: "wall",
+            components: {
+                "transform": (x: -2.0, y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "occluder": (half_width: 0.5, half_height: 5.0),
+            },
+        ),
+
+        // A pillar off to one side, so the occluder set is a union of two
+        // separated rectangles rather than one — the property that makes an
+        // order-dependent reader detectable.
+        (
+            name: "pillar",
+            components: {
+                "transform": (x: 6.0, y: 9.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "occluder": (half_width: 2.0, half_height: 2.0),
+            },
+        ),
+
+        // In the open: nothing between it and the lamp.
+        (
+            name: "watcher",
+            components: {
+                "transform": (x: 4.0, y: -14.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "lit": (level: 0.0),
+            },
+        ),
+
+        // Behind the wall: every ray of the fan is blocked.
+        (
+            name: "guard",
+            components: {
+                "transform": (x: 4.0, y: 0.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "lit": (level: 0.0),
+            },
+        ),
+
+        // In the penumbra, where two of the three rays clear the wall's corner
+        // and one does not.
+        (
+            name: "sentry",
+            components: {
+                "transform": (x: 4.0, y: -11.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "lit": (level: 0.0),
+            },
+        ),
+
+        // Deeper into the penumbra: one ray of three. Together with the sentry
+        // these two are what make the scene able to tell a working three-ray fan
+        // from a single hard ray *and* from a two-ray one — a scene holding only
+        // the extremes would be reproduced correctly by all three.
+        (
+            name: "scout",
+            components: {
+                "transform": (x: 4.0, y: -10.5, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "lit": (level: 0.0),
+            },
+        ),
+
+        // A crate that is both a blocker and a receiver, with different extents
+        // for the two roles. It is the case that would be permanently dark if
+        // an entity's own occluder shadowed it, and the case a single merged
+        // type could not express.
+        (
+            name: "crate",
+            components: {
+                "transform": (x: 0.0, y: 8.0, rotation: 0.0, scale_x: 1.0, scale_y: 1.0),
+                "occluder": (half_width: 1.5, half_height: 1.5),
+                "lit": (level: 0.0),
+            },
+        ),
+    ],
+)

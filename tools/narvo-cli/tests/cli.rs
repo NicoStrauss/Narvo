@@ -233,8 +233,8 @@ fn a_machine_written_scene_warns_through_the_tool() {
     // rather than a hand-made imitation of it.
     let registry = {
         use narvo_ecs::{
-            Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
-            Sampling, Shake, Sprite, Tally, Tint, Transform,
+            Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, LightSource, Lit, Occluder,
+            RigidBody, Rng, Sampling, Shake, Sprite, Tally, Tint, Transform,
         };
         let mut registry = ComponentRegistry::new();
         for result in [
@@ -252,6 +252,8 @@ fn a_machine_written_scene_warns_through_the_tool() {
             registry.register_component::<Tally>("tally"),
             registry.register_component::<RigidBody>("rigidbody"),
             registry.register_component::<Tint>("tint"),
+            registry.register_component::<LightSource>("lightsource"),
+            registry.register_component::<Lit>("lit"),
         ] {
             result.expect("a fresh registry accepts each once");
         }
@@ -326,8 +328,8 @@ fn a_machine_written_scene_warns_through_the_tool() {
 #[test]
 fn the_transcribed_census_is_the_engine_s_own_set() {
     use narvo_ecs::{
-        Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
-        Sampling, Shake, Sprite, Tally, Tint, Transform,
+        Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, LightSource, Lit, Occluder,
+        RigidBody, Rng, Sampling, Shake, Sprite, Tally, Tint, Transform,
     };
 
     let mut transcribed = ComponentRegistry::new();
@@ -346,6 +348,8 @@ fn the_transcribed_census_is_the_engine_s_own_set() {
         transcribed.register_component::<Tally>("tally"),
         transcribed.register_component::<RigidBody>("rigidbody"),
         transcribed.register_component::<Tint>("tint"),
+        transcribed.register_component::<LightSource>("lightsource"),
+        transcribed.register_component::<Lit>("lit"),
     ] {
         result.expect("a fresh registry accepts each once");
     }

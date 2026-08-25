@@ -72,7 +72,7 @@
 
 use narvo_ecs::{
     ComponentRegistry, EcsError, Events, HitRect, Scheduler, SystemContext, Tally, World,
-    advance_bursts, compose_camera, register_engine_components, rotate_events,
+    advance_bursts, compose_camera, illuminate, register_engine_components, rotate_events,
 };
 use narvo_input::InputEvent;
 
@@ -116,6 +116,13 @@ pub fn build(text: &str) -> Result<Simulation, SceneStartError> {
     // one tick old when the frame that follows draws it — the same "advance
     // first, then compose" order `Shake` fixed in M3.31 and for the same reason.
     scheduler.add_system("bursts", advance_bursts)?;
+    // M8.8: the game light, and it runs **after** physics and before the camera
+    // is composed. After physics, because a body that moved this tick has to be
+    // lit where it ended up rather than where it started; before the camera,
+    // because the camera is the last word on the tick (ADR-0017) and a light is
+    // not a contributor to it. A world with no `Lit` entity leaves this system
+    // writing nothing at all, which is why adding it moved no existing hash.
+    scheduler.add_system("light", illuminate)?;
     scheduler.add_system("compose_camera", compose_camera)?;
 
     Ok(Simulation {
@@ -692,7 +699,7 @@ mod tests {
     fn the_whole_engine_component_set_is_registered() {
         let simulation = build(MOVING).expect("loads");
 
-        assert_eq!(simulation.registry.len(), 15);
+        assert_eq!(simulation.registry.len(), 17);
         assert!(canonical_dump(&simulation.world, &simulation.registry).is_ok());
     }
 

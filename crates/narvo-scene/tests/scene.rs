@@ -9,8 +9,9 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use narvo_ecs::{
-    Burst, Camera, ComponentRegistry, EntityId, Follow, HitRect, Layer, Occluder, RigidBody, Rng,
-    Sampling, Shake, Sprite, Tally, Tint, Transform, World, canonical_dump, first_difference,
+    Burst, Camera, ComponentRegistry, EntityId, Follow, HitRect, Layer, LightSource, Lit, Occluder,
+    RigidBody, Rng, Sampling, Shake, Sprite, Tally, Tint, Transform, World, canonical_dump,
+    first_difference,
 };
 use narvo_scene::SceneError;
 use proptest::prelude::*;
@@ -79,6 +80,12 @@ fn registry() -> ComponentRegistry {
         .expect("a fresh registry accepts this component");
     registry
         .register_component::<Tint>("tint")
+        .expect("a fresh registry accepts this component");
+    registry
+        .register_component::<LightSource>("lightsource")
+        .expect("a fresh registry accepts this component");
+    registry
+        .register_component::<Lit>("lit")
         .expect("a fresh registry accepts this component");
     registry
 }
@@ -187,6 +194,9 @@ fn reference_world() -> World {
     world
         .insert(anonymous, RigidBody::dynamic(0.5, 0.25).at(-8.0, 0.5))
         .expect("the entity was just spawned");
+    world
+        .insert(anonymous, LightSource::new(24.0, 1.0, 0.75))
+        .expect("the entity was just spawned");
 
     world
         .insert(
@@ -233,6 +243,12 @@ fn reference_world() -> World {
                 ..Burst::new(24, 7, 12, 1.5, 1.0)
             },
         )
+        .expect("a fresh entity takes a component");
+    // Whatever an author writes is overwritten by the first tick, so the
+    // specimen and this reference agree on the *starting* value and nothing
+    // more — which is `Lit::DARK`, and is why the specimen writes zero.
+    world
+        .insert(player, Lit::DARK)
         .expect("a fresh entity takes a component");
 
     world

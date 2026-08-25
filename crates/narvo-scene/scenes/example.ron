@@ -64,6 +64,22 @@ Scene(
                     friction: 0.5,
                     density: 1.0,
                 ),
+                // What this entity gives off, for the simulation's purposes
+                // (M8.8). Three bare floats, ADR-0014's rule again: how far the
+                // light reaches, how bright it is at the source, and the
+                // emitter's own half-width across the line of sight, which is
+                // what makes its shadows soft rather than hard.
+                //
+                // **It is the game light and not the picture.** `illuminate`
+                // reads it in the tick, on the CPU, and writes a `lit` level on
+                // every entity that carries one; the cascade on the GPU is a
+                // separate lighting that decides nothing. Nothing about this
+                // component points at a renderer.
+                //
+                // **This entry is here because a guard demands it, not because
+                // the format does**, the same way `occluder`, `tint` and `burst`
+                // below are.
+                "lightsource": (range: 24.0, intensity: 1.0, radius: 0.75),
             },
         ),
         (
@@ -151,6 +167,21 @@ Scene(
                 // a reader looking for an example of the format should not have
                 // to wonder which frame of a burst they are looking at.
                 "burst": (count: 24, seed: 7, age: 12, life: 12, speed: 1.5, spread: 1.0),
+                // How lit this entity is, as one scalar (M8.8, GDD-L6a). It is
+                // **written** by the tick rather than read from here: whatever
+                // an author puts in the file is overwritten on the first tick
+                // from the `lightsource` above and every `occluder` in the
+                // world, so the value below is a starting point and not a
+                // setting. Zero is what one writes when the starting value does
+                // not matter, which is always.
+                //
+                // No colour, deliberately: the game light is one axis so that
+                // the rule a designer writes against it is one comparison.
+                //
+                // **This entry is here for the same reason `tint` and `burst`
+                // above are** — the specimen has to carry every registered type
+                // at least once.
+                "lit": (level: 0.0),
             },
         ),
     ],

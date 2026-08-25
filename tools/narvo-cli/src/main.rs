@@ -229,6 +229,8 @@ mod tests {
                 "follow",
                 "hitrect",
                 "layer",
+                "lightsource",
+                "lit",
                 "occluder",
                 "rigidbody",
                 "rng",

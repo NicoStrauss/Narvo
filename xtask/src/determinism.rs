@@ -207,6 +207,39 @@ const CASES: &[Case] = &[
         ],
         record: true,
     },
+    // The game light (M8.8), and it is here because it is the newest thing in
+    // the state hash that is *computed* rather than authored. `illuminate` runs
+    // `sqrt`, division and a slab test over every receiver every tick, and
+    // `light.rs` claims in its own header that those agree on two platforms
+    // because IEEE-754 requires them to be correctly rounded. **Nothing checked
+    // that claim until this case existed**: `determinism-case.ron` carries no
+    // light, so the scene-file case above compares a world in which `illuminate`
+    // writes nothing at all.
+    //
+    // `lit.ron` puts a receiver at each of the three-ray fan's four outcomes, so
+    // the comparison covers a fully lit reading, a fully dark one and both
+    // partial ones rather than only the extremes.
+    //
+    // **The named limit:** the scene is static, so this compares the arithmetic
+    // and not its evolution — one tick's worth of computation, repeated. A case
+    // whose receivers moved would be stronger, and the way to get one is a light
+    // over a physics scene; that would move `physics_drop.ron`'s hash, which is
+    // another task's evidence, so it is written down here rather than taken.
+    //
+    // No recording: the scene consumes no input, the same reason `physics` has
+    // none.
+    Case {
+        name: "scene-file.lit.t1000",
+        args: &[
+            "--mode",
+            "scene-file",
+            "--scene",
+            "crates/narvo-app/scenes/lit.ron",
+            "--ticks",
+            "1000",
+        ],
+        record: false,
+    },
 ];
 
 /// Runs the matrix and writes its artifacts into `directory`.

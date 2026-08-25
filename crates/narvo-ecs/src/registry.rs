@@ -479,6 +479,8 @@ pub fn register_engine_components(registry: &mut ComponentRegistry) -> Result<()
     registry.register_component::<crate::RigidBody>("rigidbody")?;
     registry.register_component::<crate::Tint>("tint")?;
     registry.register_component::<crate::Occluder>("occluder")?;
+    registry.register_component::<crate::LightSource>("lightsource")?;
+    registry.register_component::<crate::Lit>("lit")?;
 
     Ok(())
 }
@@ -524,6 +526,8 @@ mod tests {
                 "follow",
                 "hitrect",
                 "layer",
+                "lightsource",
+                "lit",
                 "occluder",
                 "rigidbody",
                 "rng",
@@ -559,7 +563,7 @@ mod tests {
             .register_component::<Position>("position")
             .expect("a name the engine does not use");
 
-        assert_eq!(registry.len(), 15);
+        assert_eq!(registry.len(), 17);
     }
 
     #[test]

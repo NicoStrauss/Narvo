@@ -12,8 +12,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use narvo_ecs::{
-    Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, Occluder, RigidBody, Rng, Sampling,
-    Shake, Sprite, Tally, Tint, Transform, World,
+    Burst, Camera, ComponentRegistry, Follow, HitRect, Layer, LightSource, Lit, Occluder,
+    RigidBody, Rng, Sampling, Shake, Sprite, Tally, Tint, Transform, World,
 };
 use narvo_scene::{Finding, Location, SceneError, Severity};
 
@@ -35,6 +35,8 @@ fn registry() -> ComponentRegistry {
         registry.register_component::<Tally>("tally"),
         registry.register_component::<RigidBody>("rigidbody"),
         registry.register_component::<Tint>("tint"),
+        registry.register_component::<LightSource>("lightsource"),
+        registry.register_component::<Lit>("lit"),
     ] {
         result.expect("a fresh registry accepts each of these once");
     }
